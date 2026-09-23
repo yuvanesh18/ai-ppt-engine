@@ -16,7 +16,7 @@ from typing import Optional
 
 from llm.groq_client import GroqClient, JSONParseError
 from llm.prompts import CONTENT_ANALYSIS_PROMPT, SYSTEM_ROLE_ANALYST
-from llm.schemas import ContentAnalysis
+from llm.schemas import ContentAnalysis, normalize_content_analysis_lists
 from utils.logging_utils import get_logger
 from utils.text_utils import truncate_text
 
@@ -111,6 +111,8 @@ def analyze_content(
     except Exception as e:
         raise ContentAnalysisError(f"Content analysis LLM call failed: {e}") from e
 
+    raw_data = normalize_content_analysis_lists(raw_data)
+
     try:
         analysis = ContentAnalysis(**raw_data)
         logger.info(
@@ -122,21 +124,31 @@ def analyze_content(
 
     except Exception as e:
         logger.error("ContentAnalysis validation failed: %s. Raw data: %s", e, str(raw_data)[:500])
-        # Build a minimal analysis from whatever we got
-        return ContentAnalysis(
-            main_topic=raw_data.get("main_topic", "Unknown Topic"),
-            key_concepts=raw_data.get("key_concepts", []),
-            sections=raw_data.get("sections", []),
-            statistics=raw_data.get("statistics", []),
-            processes=raw_data.get("processes", []),
-            comparisons=raw_data.get("comparisons", []),
-            timelines=raw_data.get("timelines", []),
-            conclusions=raw_data.get("conclusions", []),
-            recommendations=raw_data.get("recommendations", []),
-            suggested_slide_count=suggested,
-            content_types_detected=raw_data.get("content_types_detected", ["TITLE_AND_CONTENT"]),
-            summary=raw_data.get("summary", ""),
-        )
+        # Build a minimal analysis from whatever we got — never let a second
+        # bad field crash this fallback path too.
+        try:
+            return ContentAnalysis(
+                main_topic=raw_data.get("main_topic", "Unknown Topic"),
+                key_concepts=raw_data.get("key_concepts", []),
+                sections=raw_data.get("sections", []),
+                statistics=raw_data.get("statistics", []),
+                processes=raw_data.get("processes", []),
+                comparisons=raw_data.get("comparisons", []),
+                timelines=raw_data.get("timelines", []),
+                conclusions=raw_data.get("conclusions", []),
+                recommendations=raw_data.get("recommendations", []),
+                suggested_slide_count=suggested,
+                content_types_detected=raw_data.get("content_types_detected", ["TITLE_AND_CONTENT"]),
+                summary=raw_data.get("summary", ""),
+            )
+        except Exception as e2:
+            logger.error("ContentAnalysis repair also failed: %s — falling back to minimal stub", e2)
+            return ContentAnalysis(
+                main_topic=str(raw_data.get("main_topic", "Unknown Topic")),
+                suggested_slide_count=suggested,
+                content_types_detected=["TITLE_AND_CONTENT"],
+                summary=str(raw_data.get("summary", "")),
+            )
 
 
 # ---------------------------------------------------------------------------

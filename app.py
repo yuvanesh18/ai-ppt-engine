@@ -1114,6 +1114,7 @@ def run_generation_pipeline(
                     provider="watsonx",
                     project_id=config.WATSONX_PROJECT_ID,
                     url=config.WATSONX_URL,
+                    fallback_model=config.WATSONX_FALLBACK_MODEL_ID,
                 )
             else:
                 key_manager = KeyManager(
@@ -1613,6 +1614,7 @@ def _build_qa_client(api_config: dict):
             provider="watsonx",
             project_id=config.WATSONX_PROJECT_ID,
             url=config.WATSONX_URL,
+            fallback_model=config.WATSONX_FALLBACK_MODEL_ID,
         )
     else:
         key_manager = KeyManager(

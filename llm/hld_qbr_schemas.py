@@ -129,6 +129,27 @@ class NextStepItem(BaseModel):
     date: str = ""
 
 
+class StatHighlightItem(BaseModel):
+    """One hero-metric callout badge (mined from the template's unused 'Performance Summary' slide)."""
+    label: str = ""
+    value: str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize(cls, data):
+        if isinstance(data, dict):
+            label = data.get("label") or data.get("metric") or data.get("name") or ""
+            value = data.get("value") or data.get("stat") or data.get("number") or ""
+            return {"label": str(label).strip(), "value": str(value).strip()}
+        return data
+
+
+class ProcessFlowStep(BaseModel):
+    """One chevron segment (mined from the template's unused 'Process Flow Comparison' slide)."""
+    heading: str = ""
+    description: str = ""
+
+
 class VoiceOfCustomer(BaseModel):
     quote: str = ""
     attribution: str = ""
@@ -239,6 +260,16 @@ class HLDQBRPresentationPlan(BaseModel):
     ci_section_title: str = Field(default="", description="Custom heading for the Continuous Improvement section divider, e.g. 'CONTINUOUS IMPROVEMENT INITIATIVES & VALUE CREATION'")
     quality_section_title: str = Field(default="", description="Custom heading for the Quality Management section divider, e.g. 'QUALITY MANAGEMENT & REGULATORY ASSURANCE'")
     next_steps_title: str = Field(default="", description="Custom heading for the Next Steps slide, e.g. 'IMMEDIATE NEXT STEPS & TIMELINE'")
+    org_structure_title: str = Field(default="", description="Custom heading for the Org Structure slide, e.g. 'ACCOUNT TEAM & KEY CONTACTS'")
+    quality_org_structure_title: str = Field(default="", description="Custom heading for the Quality Org Structure slide, e.g. 'QUALITY & COMPLIANCE TEAM'")
+    voice_of_customer_title: str = Field(default="", description="Custom heading for the Voice of Customer slide, e.g. 'DIRECT CUSTOMER FEEDBACK'")
+    gemba_walk_title: str = Field(default="", description="Custom heading for the Gemba Walk slide, e.g. 'FACILITY WALKTHROUGH FINDINGS'")
+    ci_tracker_title: str = Field(default="", description="Custom heading for the CI Tracker slide, e.g. 'IMPROVEMENT INITIATIVE TRACKER'")
+    nc_review_title: str = Field(default="", description="Custom heading for the Non-Conformance Review slide, e.g. 'ISSUE REVIEW & CAPA SUMMARY'")
+    nc_tracker_title: str = Field(default="", description="Custom heading for the Non-Conformance Tracker slide, e.g. 'ISSUE & CORRECTIVE ACTION TRACKER'")
+    kpi_dashboard_title: str = Field(default="", description="Custom heading for the KPI Dashboard slide, e.g. 'SAFETY, QUALITY & OPERATIONAL KPIs'")
+    stat_highlights_title: str = Field(default="", description="Custom heading for the Stat Highlights slide, e.g. 'PERFORMANCE AT A GLANCE'")
+    process_flow_title: str = Field(default="", description="Custom heading for the Process Flow slide, e.g. 'ONBOARDING WORKFLOW'")
 
     agenda_topics: List[str] = Field(default_factory=list)
     executive_summary: List[str] = Field(default_factory=list, description="3 to 5 key takeaways for Executive Summary slide")
@@ -276,6 +307,9 @@ class HLDQBRPresentationPlan(BaseModel):
 
     next_steps: List[NextStepItem] = Field(default_factory=list, description="Up to 4 rows")
 
+    stat_highlights: List[StatHighlightItem] = Field(default_factory=list, description="Up to 6 hero metric callouts")
+    process_flow: List[ProcessFlowStep] = Field(default_factory=list, description="Up to 6 sequential process/workflow steps")
+
     content_traceability: Dict[str, List[str]] = Field(
         default_factory=dict,
         description=(
@@ -283,6 +317,15 @@ class HLDQBRPresentationPlan(BaseModel):
             "to the Content Model item ids that support it. Only cite ids that genuinely "
             "support the field's text; omit a field entirely if it was not grounded in the "
             "supplied Content Model."
+        ),
+    )
+
+    narrative_order: List[str] = Field(
+        default_factory=list,
+        description=(
+            "LLM-authored slide sequence (archetype/DIVIDER dispatch keys) between the "
+            "mandatory Executive Summary and Closing slides. Empty means the builder falls "
+            "back to its default fixed order."
         ),
     )
 

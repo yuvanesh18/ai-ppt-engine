@@ -22,6 +22,12 @@ from utils.logging_utils import get_logger
 logger = get_logger(__name__)
 
 
+def _mask_key(api_key: str) -> str:
+    """Return a log-safe identifier for an API key (last 4 chars only)."""
+    key = (api_key or "").strip()
+    return f"...{key[-4:]}" if len(key) > 4 else "..."
+
+
 class KeyManagerError(Exception):
     """Raised when no keys are available."""
 
@@ -36,7 +42,8 @@ class KeyManager:
 
     def __init__(self, keys: List[str], model: str, temperature: float = 0.3,
                  max_tokens: int = 2048, max_retries: int = 3, provider: str = "groq",
-                 project_id: Optional[str] = None, url: Optional[str] = None) -> None:
+                 project_id: Optional[str] = None, url: Optional[str] = None,
+                 fallback_model: Optional[str] = None) -> None:
         valid = [k.strip() for k in keys if k and k.strip()]
         if not valid:
             raise KeyManagerError("No valid API keys provided.")
@@ -48,6 +55,7 @@ class KeyManager:
         self._provider = (provider or "groq").strip().lower()
         self._project_id = project_id
         self._url = url
+        self._fallback_model = fallback_model
         self._index = 0
         self._lock = threading.Lock()
         logger.info(
@@ -91,7 +99,7 @@ class KeyManager:
             key = self.next_key()
             key_num = self._index  # already incremented
 
-        logger.debug("Chunk %s → key #%d", chunk_index, key_num)
+        logger.info("Chunk %s → key #%d (%s) [provider=%s]", chunk_index, key_num, _mask_key(key), self._provider)
 
         if self._provider == "watsonx":
             from llm.watsonx_client import WatsonxClient  # local import to avoid circular
@@ -104,6 +112,7 @@ class KeyManager:
                 temperature=self._temperature,
                 max_tokens=max_tokens or self._max_tokens,
                 max_retries=self._max_retries,
+                fallback_model=self._fallback_model,
             )
 
         from llm.groq_client import GroqClient  # local import to avoid circular
@@ -131,6 +140,7 @@ class KeyManager:
                 provider="watsonx",
                 project_id=config.WATSONX_PROJECT_ID,
                 url=config.WATSONX_URL,
+                fallback_model=config.WATSONX_FALLBACK_MODEL_ID,
             )
 
         return cls(

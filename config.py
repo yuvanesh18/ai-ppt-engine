@@ -68,7 +68,9 @@ GROQ_API_KEYS: list[str] = [
 WATSONX_API_KEY: str = os.getenv("WATSONX_API_KEY", "")
 WATSONX_PROJECT_ID: str = os.getenv("WATSONX_PROJECT_ID", "")
 WATSONX_URL: str = os.getenv("WATSONX_URL", "https://us-south.ml.cloud.ibm.com")
-WATSONX_MODEL_ID: str = os.getenv("WATSONX_MODEL_ID", "openai/gpt-oss-120b")
+WATSONX_MODEL_ID: str = os.getenv("WATSONX_MODEL_ID", "meta-llama/llama-3-3-70b-instruct")
+# Used when the primary model hits a 429/consumption_limit_reached after all retries.
+WATSONX_FALLBACK_MODEL_ID: str = os.getenv("WATSONX_FALLBACK_MODEL_ID", "ibm/granite-4-h-small")
 WATSONX_MAX_TOKENS_PLAN: int = int(os.getenv("WATSONX_MAX_TOKENS_PLAN", "4096"))
 WATSONX_MAX_TOKENS_SLIDE: int = int(os.getenv("WATSONX_MAX_TOKENS_SLIDE", "2048"))
 WATSONX_TEMPERATURE: float = float(os.getenv("WATSONX_TEMPERATURE", "0.3"))

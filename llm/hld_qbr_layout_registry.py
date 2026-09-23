@@ -75,7 +75,7 @@ HLD_QBR_ARCHETYPES: List[ArchetypeSpec] = [
     },
     {
         "layout_id": "VOICE_OF_CUSTOMER", "plan_field": "voice_of_customer",
-        "purpose": "A single direct customer quote",
+        "purpose": "A single direct quote from any customer, client, stakeholder, or survey respondent (not limited to a literal 'Voice of the Customer' section)",
         "supported_content_types": ["quote"],
         "required_content": ["quote"], "optional_content": ["attribution"],
         "constraints": {"max_items": 1},
@@ -83,7 +83,7 @@ HLD_QBR_ARCHETYPES: List[ArchetypeSpec] = [
     },
     {
         "layout_id": "GEMBA_WALK", "plan_field": "gemba_walk",
-        "purpose": "Gemba walk area/observation table",
+        "purpose": "Any area/location + observation table — site walkthroughs, facility audits, store/branch visits, service reviews, or similar structured observations (regardless of whether the source uses the term 'Gemba')",
         "supported_content_types": ["process", "fact"],
         "required_content": ["area", "observation"], "optional_content": [],
         "constraints": {"max_items": 4},
@@ -91,7 +91,7 @@ HLD_QBR_ARCHETYPES: List[ArchetypeSpec] = [
     },
     {
         "layout_id": "CI_TRACKER", "plan_field": "ci_tracker",
-        "purpose": "Continuous improvement activity tracker",
+        "purpose": "Any improvement-initiative/activity tracker with status and value — Lean, Kaizen, process improvement, optimization projects, or general initiative logs",
         "supported_content_types": ["process", "step"],
         "required_content": ["activity"], "optional_content": ["category", "status", "value", "comment"],
         "constraints": {"max_items": 7},
@@ -99,7 +99,7 @@ HLD_QBR_ARCHETYPES: List[ArchetypeSpec] = [
     },
     {
         "layout_id": "QUALITY_ORG_STRUCTURE", "plan_field": "quality_org_structure",
-        "purpose": "Quality-team org structure",
+        "purpose": "A second, smaller people/role list distinct from 'org_structure' — e.g. a specialized team (quality, compliance, technical, security, or any secondary team) if the source describes more than one team",
         "supported_content_types": ["person", "entity"],
         "required_content": ["name"], "optional_content": ["role"],
         "constraints": {"max_items": 5},
@@ -107,11 +107,19 @@ HLD_QBR_ARCHETYPES: List[ArchetypeSpec] = [
     },
     {
         "layout_id": "NC_TRACKER", "plan_field": "nc_tracker",
-        "purpose": "Non-conformance/CAPA tracker table",
+        "purpose": "Any issue/incident/defect/deviation/complaint tracker table with dates and status — not limited to formal 'non-conformance' terminology",
         "supported_content_types": ["risk", "fact"],
         "required_content": ["event"], "optional_content": ["period", "nc_id", "due_date", "status"],
         "constraints": {"max_items": 7},
         "guardrails": ["Never invent NC/CAPA ids, dates, or statuses not present in the source"],
+    },
+    {
+        "layout_id": "NC_REVIEW_SUMMARY", "plan_field": "nc_review_summary",
+        "purpose": "A 4-number issue/incident review scorecard (total initiated, total assigned, total closed, percent complete) — a summary companion to nc_tracker's detailed row-by-row table",
+        "supported_content_types": ["metric", "fact"],
+        "required_content": ["total", "assigned", "closed", "pct"], "optional_content": [],
+        "constraints": {"max_items": 4},
+        "guardrails": ["Never invent totals/percentages not stated or computable from the source"],
     },
     {
         "layout_id": "NEXT_STEPS", "plan_field": "next_steps",
@@ -120,6 +128,22 @@ HLD_QBR_ARCHETYPES: List[ArchetypeSpec] = [
         "required_content": ["step"], "optional_content": ["date"],
         "constraints": {"max_items": 4},
         "guardrails": ["Do not invent next steps not implied by the source"],
+    },
+    {
+        "layout_id": "STAT_HIGHLIGHTS", "plan_field": "stat_highlights",
+        "purpose": "3-6 hero-metric callout badges (big number + label) for headline stats worth calling out visually — any domain, not detailed data",
+        "supported_content_types": ["metric", "outcome"],
+        "required_content": ["label", "value"], "optional_content": [],
+        "constraints": {"max_items": 6},
+        "guardrails": ["Never invent stat values not stated in the source"],
+    },
+    {
+        "layout_id": "PROCESS_FLOW", "plan_field": "process_flow",
+        "purpose": "A left-to-right sequence of process/workflow/roadmap steps (chevron segments) — any multi-step process, not limited to a specific domain",
+        "supported_content_types": ["process", "step"],
+        "required_content": ["heading"], "optional_content": ["description"],
+        "constraints": {"max_items": 6},
+        "guardrails": ["Do not invent process steps not described in the source"],
     },
 ]
 

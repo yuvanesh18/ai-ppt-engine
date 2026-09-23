@@ -198,6 +198,100 @@ def _strip_decorative_connectors(slide: Any) -> int:
     return removed
 
 
+def _render_stat_highlights(slide: Any, stats: List[Any]) -> None:
+    """Composes N hero-metric badges (icon circle + big number + label) on a blank
+    canvas — mined from the template's unused 'Performance Summary' slide (34)."""
+    n = len(stats)
+    if n == 0:
+        return
+    LEFT_MARGIN = Inches(0.40)
+    TOTAL_WIDTH = Inches(12.53)
+    GAP = Inches(0.30)
+    CARD_W = int((TOTAL_WIDTH - GAP * (n - 1)) / n)
+    TOP = Inches(2.30)
+    BADGE_D = Inches(0.95)
+
+    for i, stat in enumerate(stats):
+        left = int(LEFT_MARGIN + i * (CARD_W + GAP))
+
+        badge = slide.shapes.add_shape(MSO_SHAPE.OVAL, left + (CARD_W - BADGE_D) // 2, TOP, BADGE_D, BADGE_D)
+        badge.fill.solid()
+        badge.fill.fore_color.rgb = RGBColor(0, 43, 73)
+        badge.line.fill.background()
+        tf_b = badge.text_frame
+        tf_b.word_wrap = True
+        p_b = tf_b.paragraphs[0]
+        p_b.text = str(i + 1)
+        p_b.alignment = PP_ALIGN.CENTER
+        for r in p_b.runs:
+            r.font.name = "Verdana"
+            r.font.size = Pt(16)
+            r.font.bold = True
+            r.font.color.rgb = RGBColor(255, 190, 0)
+
+        value_box = slide.shapes.add_textbox(left, TOP + BADGE_D + Inches(0.15), CARD_W, Inches(0.60))
+        tf_v = value_box.text_frame
+        tf_v.word_wrap = True
+        p_v = tf_v.paragraphs[0]
+        p_v.text = stat.value
+        p_v.alignment = PP_ALIGN.CENTER
+        for r in p_v.runs:
+            r.font.name = "Verdana"
+            r.font.size = Pt(22 if len(stat.value) <= 8 else 16)
+            r.font.bold = True
+            r.font.color.rgb = RGBColor(0, 43, 73)
+
+        label_box = slide.shapes.add_textbox(left, TOP + BADGE_D + Inches(0.75), CARD_W, Inches(0.90))
+        tf_l = label_box.text_frame
+        tf_l.word_wrap = True
+        p_l = tf_l.paragraphs[0]
+        p_l.text = stat.label
+        p_l.alignment = PP_ALIGN.CENTER
+        for r in p_l.runs:
+            r.font.name = "Verdana"
+            r.font.size = Pt(11)
+            r.font.color.rgb = RGBColor(88, 107, 123)
+
+
+def _render_process_flow(slide: Any, steps: List[Any]) -> None:
+    """Composes N left-to-right overlapping chevron segments on a blank canvas —
+    mined from the template's unused 'Process Flow Comparison' slide (50)."""
+    n = len(steps)
+    if n == 0:
+        return
+    LEFT_MARGIN = Inches(0.40)
+    TOTAL_WIDTH = Inches(12.53)
+    OVERLAP = Inches(0.18)  # slight overlap reads as a connected flow, not separate boxes
+    SEG_W = int((TOTAL_WIDTH + OVERLAP * (n - 1)) / n)
+    TOP = Inches(2.60)
+    SEG_H = Inches(1.10)
+
+    for i, step in enumerate(steps):
+        left = int(LEFT_MARGIN + i * (SEG_W - OVERLAP))
+        chevron = slide.shapes.add_shape(MSO_SHAPE.CHEVRON, left, TOP, SEG_W, SEG_H)
+        chevron.fill.solid()
+        chevron.fill.fore_color.rgb = TEMPLATE_SERIES_COLORS[i % len(TEMPLATE_SERIES_COLORS)]
+        chevron.line.fill.background()
+        tf = chevron.text_frame
+        tf.word_wrap = True
+        tf.margin_left = Inches(0.15)
+        tf.margin_right = Inches(0.25)
+        p_h = tf.paragraphs[0]
+        p_h.text = step.heading.upper()
+        for r in p_h.runs:
+            r.font.name = "Verdana"
+            r.font.size = Pt(12)
+            r.font.bold = True
+            r.font.color.rgb = RGBColor(255, 255, 255)
+        if step.description:
+            p_d = tf.add_paragraph()
+            p_d.text = step.description
+            for r in p_d.runs:
+                r.font.name = "Verdana"
+                r.font.size = Pt(9)
+                r.font.color.rgb = RGBColor(255, 255, 255)
+
+
 def _shape_by_name(slide: Any, name: str) -> Optional[Any]:
     for shape in slide.shapes:
         if shape.name == name:
@@ -561,9 +655,918 @@ def _fill_table_rows(
                 tbl.cell(r_idx, c_idx).text = ""
 
 
+def _get_chart_list(plan: HLDQBRPresentationPlan) -> List[Any]:
+    return list(plan.charts) if plan.charts else ([plan.operational_chart] if plan.operational_chart else [])
+
+
+def _get_table_list(plan: HLDQBRPresentationPlan) -> List[Any]:
+    return list(plan.kpi_tables) if plan.kpi_tables else []
+
+
+# ---------------------------------------------------------------------------
+# Dispatch functions — one per orderable archetype/divider. Each is a pure
+# extraction of what used to be an inline block inside build(), unchanged in
+# behavior, so build() can call them in WHATEVER sequence the LLM's narrative
+# order specifies instead of a hardcoded chronology. See _resolve_archetype_order.
+# ---------------------------------------------------------------------------
+
+def _dispatch_org_structure(prs: Any, plan: HLDQBRPresentationPlan) -> None:
+    if not plan.org_structure:
+        return
+    org_slide = _clone_slide(prs, IDX_ORG_STRUCTURE)
+    org_title = _shape_by_name(org_slide, "Title 1")
+    if org_title is not None:
+        _set_first_run_text(org_title, (plan.org_structure_title or "ACCOUNT TEAM & KEY CONTACTS").strip().upper())
+    org_boxes = sorted(
+        (s for s in org_slide.shapes if s.name.startswith("Rectangle: Rounded Corners")),
+        key=lambda s: (s.top, s.left),
+    )
+    for box, person in zip(org_boxes, plan.org_structure):
+        if person.name:
+            _set_org_box(box, person.name, person.role)
+    for box in org_boxes[len(plan.org_structure):]:
+        _set_org_box(box, "", "")
+
+
+def _dispatch_achievements(prs: Any, plan: HLDQBRPresentationPlan) -> None:
+    if not plan.achievements:
+        return
+    achievements_slide = _clone_slide(prs, IDX_ACHIEVEMENTS)
+    _strip_guidance_shapes(achievements_slide)
+    _set_or_remove_facility_placeholder(achievements_slide, plan.facility_name)
+
+    ach_title = _shape_by_name(achievements_slide, "Title 2")
+    if ach_title is None:
+        ach_title = _shape_by_name(achievements_slide, "Title 6")
+    if ach_title is not None and ach_title.text_frame.paragraphs:
+        heading_text = (
+            plan.achievements_title.strip().upper()
+            if plan.achievements_title
+            else "PRIOR QUARTER MILESTONES & WINS"
+        )
+        p0 = ach_title.text_frame.paragraphs[0]
+        p0.text = heading_text
+        if p0.runs:
+            p0.runs[0].font.size = Pt(22)
+            p0.runs[0].font.bold = True
+
+    milestone_boxes = sorted(
+        (s for s in achievements_slide.shapes if s.name == "Content Placeholder 42"),
+        key=lambda s: s.top,
+    )
+    connectors = sorted(
+        (s for s in achievements_slide.shapes if s.name.startswith("Flowchart: Connector")),
+        key=lambda s: s.top,
+    )
+
+    n_ach = len(plan.achievements)
+    max_ach_len = max(len(t) for t in plan.achievements) if plan.achievements else 0
+
+    TOP_MIN = 1200000  # ~1.31 inches
+    TOP_MAX = 5400000  # ~5.91 inches
+    spacing = (TOP_MAX - TOP_MIN) // (n_ach - 1) if n_ach > 1 else 0
+
+    if max_ach_len > 140 or n_ach >= 5:
+        ach_font_sz = Pt(11.0)
+    elif max_ach_len > 80:
+        ach_font_sz = Pt(12.5)
+    else:
+        ach_font_sz = Pt(13.5)
+
+    for i, (text, box, conn) in enumerate(zip(plan.achievements, milestone_boxes, connectors)):
+        new_top = TOP_MIN + i * spacing if n_ach > 1 else (TOP_MIN + TOP_MAX) // 2
+        conn.top = int(new_top)
+        box.top = int(new_top)
+        box.height = int(Inches(0.65))
+        box.text_frame.word_wrap = True
+
+        p = box.text_frame.paragraphs[0]
+        p.text = text
+        pPr = p._p.find(qn("a:pPr"))
+        if pPr is not None:
+            lnSpc = pPr.find(qn("a:lnSpc"))
+            if lnSpc is not None:
+                pPr.remove(lnSpc)
+        for r in p.runs:
+            r.font.name = "Verdana"
+            r.font.size = ach_font_sz
+            r.font.color.rgb = RGBColor(0, 43, 73)
+
+        p_c = conn.text_frame.paragraphs[0]
+        p_c.text = str(i + 1)
+        for r in p_c.runs:
+            r.font.name = "Verdana"
+            r.font.bold = True
+            r.font.size = Pt(12)
+
+    for box in milestone_boxes[n_ach:]:
+        achievements_slide.shapes._spTree.remove(box._element)
+    for conn in connectors[n_ach:]:
+        achievements_slide.shapes._spTree.remove(conn._element)
+
+
+def _dispatch_priorities(prs: Any, plan: HLDQBRPresentationPlan) -> None:
+    if not plan.priorities:
+        return
+    priorities_slide = _clone_slide(prs, IDX_PRIORITIES)
+    _strip_guidance_shapes(priorities_slide)
+    _set_or_remove_facility_placeholder(priorities_slide, plan.facility_name)
+
+    priority_title = _shape_by_name(priorities_slide, "Title 2")
+    if priority_title is not None and priority_title.text_frame.paragraphs:
+        p0 = priority_title.text_frame.paragraphs[0]
+        heading_text = (
+            plan.priorities_title.strip().upper()
+            if plan.priorities_title
+            else (
+                f"{plan.facility_name.upper()} STRATEGIC PRIORITIES"
+                if plan.facility_name
+                else "STRATEGIC PRIORITIES & FOCUS AREAS"
+            )
+        )
+        p0.text = heading_text
+        if p0.runs:
+            p0.runs[0].font.size = Pt(22)
+            p0.runs[0].font.bold = True
+
+    n_p = len(plan.priorities)
+    SLIDE_WIDTH = 12192000  # 13.333 inches
+
+    if n_p == 2:
+        CARD_WIDTH_EMU = int(4.00 * 914400)
+        CIRCLE_CENTERS = [int(SLIDE_WIDTH * 0.30), int(SLIDE_WIDTH * 0.70)]
+    elif n_p == 1:
+        CARD_WIDTH_EMU = int(5.50 * 914400)
+        CIRCLE_CENTERS = [int(SLIDE_WIDTH * 0.50)]
+    else:
+        CARD_WIDTH_EMU = int(3.25 * 914400)
+        CIRCLE_CENTERS = [2031252, 5987374, 10056673]
+
+    p_width_in = (CARD_WIDTH_EMU - int(0.20 * 914400)) / 914400
+    chars_per_line = int(p_width_in * 9.5)
+    max_head_lines = max(
+        max(1, math.ceil(len(p.heading.strip()) / chars_per_line))
+        for p in plan.priorities
+    ) if plan.priorities else 1
+
+    if max_head_lines >= 3:
+        target_body_top = 4450000
+    elif max_head_lines == 2:
+        target_body_top = 4220000
+    else:
+        target_body_top = 3939696
+
+    priority_groups = sorted(
+        (s for s in priorities_slide.shapes if s.shape_type == 6),
+        key=lambda s: s.left,
+    )
+    for col_idx, (group, item) in enumerate(zip(priority_groups, plan.priorities)):
+        center_x = (
+            CIRCLE_CENTERS[col_idx]
+            if col_idx < len(CIRCLE_CENTERS)
+            else group.left + (group.width // 2)
+        )
+        _fill_priority_group(
+            group,
+            item.heading,
+            item.body,
+            center_x=center_x,
+            card_width=CARD_WIDTH_EMU,
+            target_body_top=target_body_top,
+        )
+    for group in priority_groups[len(plan.priorities):]:
+        priorities_slide.shapes._spTree.remove(group._element)
+
+
+def _dispatch_divider_performance(prs: Any, plan: HLDQBRPresentationPlan) -> None:
+    """Only renders if the sections it divides actually have content — a
+    divider with nothing to divide is never shown, regardless of order."""
+    chart_list = _get_chart_list(plan)
+    table_list = _get_table_list(plan)
+    has_perf_section = bool(
+        plan.action_tracker
+        or table_list
+        or plan.kpi_safety_quality
+        or plan.kpi_operational
+        or any(c and c.categories and c.series for c in chart_list)
+    )
+    if not has_perf_section:
+        return
+    perf_divider = _clone_slide(prs, IDX_SECTION_PERF_MGMT)
+    t = _shape_by_name(perf_divider, "Title 6")
+    if t is not None:
+        heading = (
+            plan.section_heading.strip().upper()
+            if plan.section_heading
+            else "OPERATIONAL PERFORMANCE & DATA REVIEW"
+        )
+        _set_first_run_text(t, heading)
+
+
+def _dispatch_action_tracker(prs: Any, plan: HLDQBRPresentationPlan) -> None:
+    if not plan.action_tracker:
+        return
+    tracker = _clone_slide(prs, IDX_TRACKER)
+    _strip_guidance_shapes(tracker)
+    _set_or_remove_facility_placeholder(tracker, plan.facility_name)
+
+    tracker_title = _shape_by_name(tracker, "Title 2")
+    if tracker_title is None:
+        tracker_title = _shape_by_name(tracker, "Title 6")
+    if tracker_title is None:
+        tracker_title = _shape_by_name(tracker, "Title 1")
+    if tracker_title is not None and tracker_title.text_frame.paragraphs:
+        heading_text = (
+            plan.action_tracker_title.strip().upper()
+            if plan.action_tracker_title
+            else "OPEN ACTION ITEMS & ACCOUNTABILITY"
+        )
+        p0 = tracker_title.text_frame.paragraphs[0]
+        p0.text = heading_text
+        if p0.runs:
+            p0.runs[0].font.size = Pt(22)
+            p0.runs[0].font.bold = True
+
+    table_shape = _shape_by_name(tracker, "Table 4")
+    if table_shape is not None and table_shape.has_table:
+        rows = [[r.project, r.owner, r.next_step, r.comment, ""] for r in plan.action_tracker]
+        _fill_table_rows(table_shape.table, rows, start_row=1, prune_unused_rows=False)
+        _apply_table_status_dots(tracker, table_shape, status_column_idx=4, action_items=plan.action_tracker)
+
+
+def _dispatch_charts(prs: Any, plan: HLDQBRPresentationPlan) -> None:
+    """Renders one slide per genuinely chartable series (0-4 instances)."""
+    chart_list = _get_chart_list(plan)
+    for chart_model in chart_list:
+        if not (chart_model and chart_model.categories and chart_model.series):
+            continue
+        chart_slide = _clone_slide(prs, IDX_BLANK_CANVAS)
+        _strip_guidance_shapes(chart_slide)
+        _strip_decorative_connectors(chart_slide)
+
+        chart_title = (chart_model.chart_title or "OPERATIONAL PERFORMANCE SNAPSHOT").upper()
+        _set_slide_header_and_sub(chart_slide, chart_title, plan.facility_name)
+
+        chart_shape = next((s for s in chart_slide.shapes if s.has_chart), None)
+
+        if chart_shape is None:
+            from pptx.enum.chart import XL_CHART_TYPE
+            chart_data_new = CategoryChartData()
+            chart_data_new.categories = chart_model.categories
+            for ser in chart_model.series:
+                chart_data_new.add_series(ser.name, ser.values)
+
+            has_insights = bool(chart_model.insights)
+            if has_insights:
+                chart_left = Inches(0.40)
+                chart_top = Inches(1.30)
+                chart_width = Inches(8.50)
+                chart_height = Inches(5.45)
+            else:
+                chart_left = Inches(0.40)
+                chart_top = Inches(1.30)
+                chart_width = Inches(12.50)
+                chart_height = Inches(5.45)
+
+            chart_shape = chart_slide.shapes.add_chart(
+                XL_CHART_TYPE.COLUMN_CLUSTERED,
+                chart_left, chart_top, chart_width, chart_height,
+                chart_data_new,
+            )
+            c = chart_shape.chart
+            c.has_title = False
+            c.has_legend = len(chart_model.series) > 1
+            if c.has_legend:
+                c.legend.position = XL_LEGEND_POSITION.TOP
+                c.legend.include_in_layout = False
+                try:
+                    c.legend.font.name = "Verdana"
+                    c.legend.font.size = Pt(10)
+                except Exception:
+                    pass
+            try:
+                c.category_axis.tick_labels.font.name = "Verdana"
+                c.category_axis.tick_labels.font.size = Pt(9)
+                c.value_axis.tick_labels.font.name = "Verdana"
+                c.value_axis.tick_labels.font.size = Pt(9)
+            except Exception:
+                pass
+            try:
+                if c.plots:
+                    plot = c.plots[0]
+                    plot.vary_by_categories = False
+                    plot.has_data_labels = True
+                    plot.data_labels.font.name = "Verdana"
+                    plot.data_labels.font.size = Pt(8)
+                    for s_idx, ser in enumerate(plot.series):
+                        color = TEMPLATE_SERIES_COLORS[s_idx % len(TEMPLATE_SERIES_COLORS)]
+                        try:
+                            fill = ser.format.fill
+                            fill.solid()
+                            fill.fore_color.rgb = color
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+            if has_insights:
+                insights = chart_model.insights
+                n_items = len(insights)
+                insights_title_text = (getattr(chart_model, "insights_title", None) or "KEY OBSERVATIONS").strip().upper()
+
+                CARD_LEFT = Inches(9.10)
+                CARD_TOP = Inches(1.30)
+                CARD_WIDTH = Inches(3.80)
+                CARD_HEIGHT = Inches(5.45)
+
+                blue_card = chart_slide.shapes.add_shape(
+                    MSO_SHAPE.ROUNDED_RECTANGLE,
+                    CARD_LEFT, CARD_TOP, CARD_WIDTH, CARD_HEIGHT
+                )
+                blue_card.fill.solid()
+                blue_card.fill.fore_color.rgb = RGBColor(0, 43, 73)
+                blue_card.line.fill.background()
+
+                header_shape = chart_slide.shapes.add_textbox(
+                    CARD_LEFT + Inches(0.20), CARD_TOP + Inches(0.20),
+                    CARD_WIDTH - Inches(0.40), Inches(0.40)
+                )
+                tf_h = header_shape.text_frame
+                tf_h.margin_left = tf_h.margin_right = tf_h.margin_top = tf_h.margin_bottom = 0
+                p_h = tf_h.paragraphs[0]
+                p_h.text = insights_title_text
+                for r in p_h.runs:
+                    r.font.name = "Verdana"
+                    r.font.size = Pt(11.5)
+                    r.font.bold = True
+                    r.font.color.rgb = RGBColor(255, 190, 0)
+
+                accent_line = chart_slide.shapes.add_shape(
+                    MSO_SHAPE.RECTANGLE,
+                    CARD_LEFT + Inches(0.20), CARD_TOP + Inches(0.58),
+                    CARD_WIDTH - Inches(0.40), Inches(0.03)
+                )
+                accent_line.fill.solid()
+                accent_line.fill.fore_color.rgb = RGBColor(255, 190, 0)
+                accent_line.line.fill.background()
+
+                text_box = chart_slide.shapes.add_textbox(
+                    CARD_LEFT + Inches(0.20), CARD_TOP + Inches(0.72),
+                    CARD_WIDTH - Inches(0.40), CARD_HEIGHT - Inches(0.85)
+                )
+                tf = text_box.text_frame
+                tf.word_wrap = True
+                tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
+
+                estimated_lines = sum(max(1, math.ceil(len(item) / 45)) for item in insights)
+                font_sz = (
+                    Pt(11.0) if estimated_lines <= 6 and n_items <= 3
+                    else Pt(10.0) if estimated_lines <= 9 and n_items <= 5
+                    else Pt(9.0) if estimated_lines <= 13
+                    else Pt(8.5)
+                )
+                for i, item in enumerate(insights):
+                    p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+                    p.space_after = Pt(8)
+                    p.text = f"• {item}"
+                    for r in p.runs:
+                        r.font.name = "Verdana"
+                        r.font.size = font_sz
+                        r.font.color.rgb = RGBColor(255, 255, 255)
+
+            continue
+
+        if chart_shape is not None:
+            c = chart_shape.chart
+            cd = CategoryChartData()
+            cd.categories = chart_model.categories
+            for ser in chart_model.series:
+                cd.add_series(ser.name, ser.values)
+            c.replace_data(cd)
+            c.has_title = False
+
+            if len(chart_model.series) > 1:
+                c.has_legend = True
+                c.legend.position = XL_LEGEND_POSITION.TOP
+                c.legend.include_in_layout = False
+                try:
+                    c.legend.font.name = "Verdana"
+                    c.legend.font.size = Pt(10)
+                except Exception:
+                    pass
+
+            try:
+                c.category_axis.tick_labels.font.name = "Verdana"
+                c.category_axis.tick_labels.font.size = Pt(9)
+                c.value_axis.tick_labels.font.name = "Verdana"
+                c.value_axis.tick_labels.font.size = Pt(9)
+            except Exception:
+                pass
+
+            try:
+                if c.plots:
+                    plot = c.plots[0]
+                    plot.vary_by_categories = False
+                    plot.has_data_labels = True
+                    plot.data_labels.font.name = "Verdana"
+                    plot.data_labels.font.size = Pt(8)
+                    for s_idx, ser in enumerate(plot.series):
+                        color = TEMPLATE_SERIES_COLORS[s_idx % len(TEMPLATE_SERIES_COLORS)]
+                        try:
+                            fill = ser.format.fill
+                            fill.solid()
+                            fill.fore_color.rgb = color
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+        side_group = None
+        for cand_name in ["Group 11", "Group 7"]:
+            g = _shape_by_name(chart_slide, cand_name)
+            if g is not None:
+                side_group = g
+                break
+        if side_group is None:
+            for sh in chart_slide.shapes:
+                if sh.shape_type == 6 and any("Rectangle" in sub.name for sub in getattr(sh, "shapes", [])):
+                    side_group = sh
+                    break
+
+        if side_group is not None:
+            if chart_model.insights:
+                insights = chart_model.insights
+                n_items = len(insights)
+                total_chars = sum(len(it) for it in insights)
+                avg_chars = total_chars / max(1, n_items)
+                max_chars = max(len(it) for it in insights) if insights else 0
+
+                TOTAL_CONTENT_WIDTH = Inches(12.533)
+                CONTENT_LEFT = Inches(0.40)
+                GAP = Inches(0.25)
+
+                if max_chars > 85 or total_chars > 380 or (n_items >= 6 and avg_chars > 55):
+                    CARD_WIDTH = int(Inches(3.85))
+                elif max_chars > 50 or total_chars > 200 or n_items >= 4:
+                    CARD_WIDTH = int(Inches(3.48))
+                else:
+                    CARD_WIDTH = int(Inches(3.00))
+
+                CHART_WIDTH = int(TOTAL_CONTENT_WIDTH - CARD_WIDTH - GAP)
+                CHART_LEFT = int(CONTENT_LEFT)
+                CARD_LEFT = int(CHART_LEFT + CHART_WIDTH + GAP)
+
+                CARD_TOP = int(Inches(1.45))
+                CARD_HEIGHT = int(Inches(5.25))
+
+                if chart_shape is not None:
+                    chart_shape.left = CHART_LEFT
+                    chart_shape.top = int(Inches(1.40))
+                    chart_shape.width = CHART_WIDTH
+                    chart_shape.height = int(Inches(5.30))
+
+                rect_names = {s.name for s in side_group.shapes if "Rectangle" in s.name or s.shape_type == 1}
+
+                spTree = chart_slide.shapes._spTree
+                for sp in list(side_group._element.xpath("p:sp")):
+                    spTree.append(sp)
+                side_group.element.getparent().remove(side_group.element)
+
+                unpacked_rects = [sh for sh in chart_slide.shapes if sh.name in rect_names]
+                if len(unpacked_rects) >= 2:
+                    blue_card = max(unpacked_rects, key=lambda r: r.height)
+                    badge = min(unpacked_rects, key=lambda r: r.height)
+                elif len(unpacked_rects) == 1:
+                    blue_card = unpacked_rects[0]
+                    badge = None
+                else:
+                    blue_card = None
+                    badge = None
+
+                for s in list(chart_slide.shapes):
+                    if s not in (blue_card, badge) and s.has_text_frame and s.text_frame.text:
+                        txt = s.text_frame.text.strip().upper()
+                        if "INSIGHT" in txt or "OBSERVATION" in txt or "KPI SUMMARY REQUIRED" in txt:
+                            try:
+                                chart_slide.shapes._spTree.remove(s._element)
+                            except Exception:
+                                pass
+
+                insights_title = (getattr(chart_model, "insights_title", None) or "KEY OBSERVATIONS").strip().upper()
+                raw_badge_width = int(Inches(len(insights_title) * 0.125 + 0.40))
+                BADGE_WIDTH = int(min(max(raw_badge_width, Inches(2.20)), CARD_WIDTH - Inches(0.35)))
+                BADGE_HEIGHT = int(Inches(0.48))
+                BADGE_LEFT = int(CARD_LEFT + (CARD_WIDTH - BADGE_WIDTH) // 2)
+                BADGE_TOP = int(CARD_TOP - Inches(0.24))
+
+                if badge is not None:
+                    badge.width = BADGE_WIDTH
+                    badge.height = BADGE_HEIGHT
+                    badge.left = BADGE_LEFT
+                    badge.top = BADGE_TOP
+                    tf_b = badge.text_frame
+                    tf_b.margin_left = Inches(0.05)
+                    tf_b.margin_right = Inches(0.05)
+                    tf_b.margin_top = Inches(0.05)
+                    tf_b.margin_bottom = Inches(0.05)
+                    tf_b.word_wrap = False
+                    p_b = tf_b.paragraphs[0]
+                    p_b.text = insights_title
+                    if len(insights_title) > 28:
+                        badge_font_sz = Pt(9.5)
+                    elif len(insights_title) > 20:
+                        badge_font_sz = Pt(10.5)
+                    else:
+                        badge_font_sz = Pt(12)
+                    for r in p_b.runs:
+                        r.font.name = "Verdana"
+                        r.font.size = badge_font_sz
+                        r.font.bold = True
+                        r.font.color.rgb = RGBColor(255, 190, 0)
+
+                if blue_card is not None:
+                    blue_card.left = CARD_LEFT
+                    blue_card.top = CARD_TOP
+                    blue_card.width = CARD_WIDTH
+                    blue_card.height = CARD_HEIGHT
+                    tf = blue_card.text_frame
+                    tf.margin_left = Inches(0.18)
+                    tf.margin_right = Inches(0.18)
+                    tf.margin_top = Inches(0.45)
+                    tf.word_wrap = True
+
+                    sample_pPr = None
+                    if len(tf.paragraphs) > 1 and tf.paragraphs[1]._p.pPr is not None:
+                        sample_pPr = copy.deepcopy(tf.paragraphs[1]._p.pPr)
+                    tf.clear()
+
+                    printable_width_in = (CARD_WIDTH - Inches(0.36)) / Inches(1)
+                    chars_per_line = int(printable_width_in * 14.5)
+                    estimated_lines = sum(max(1, math.ceil(len(item) / chars_per_line)) for item in insights)
+
+                    if estimated_lines <= 6 and n_items <= 3:
+                        font_sz = Pt(11.5)
+                    elif estimated_lines <= 9 and n_items <= 5:
+                        font_sz = Pt(10.5)
+                    elif estimated_lines <= 13:
+                        font_sz = Pt(9.5)
+                    else:
+                        font_sz = Pt(8.5)
+
+                    for i, item in enumerate(insights):
+                        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+                        p.text = item
+                        p.font.name = "Verdana"
+                        p.font.size = font_sz
+                        for r in p.runs:
+                            r.font.name = "Verdana"
+                            r.font.size = font_sz
+                            r.font.color.rgb = RGBColor(255, 255, 255)
+                        if sample_pPr is not None:
+                            if p._p.pPr is not None:
+                                p._p.remove(p._p.pPr)
+                            p._p.insert(0, copy.deepcopy(sample_pPr))
+            else:
+                side_group.element.getparent().remove(side_group.element)
+                if chart_shape is not None:
+                    chart_shape.left = Inches(0.40)
+                    chart_shape.width = Inches(12.50)
+
+
+def _dispatch_kpi_tables(prs: Any, plan: HLDQBRPresentationPlan) -> None:
+    """Renders one slide per structured tabular dataset (0-4 instances)."""
+    table_list = _get_table_list(plan)
+    for tbl_model in table_list:
+        if not (tbl_model and tbl_model.rows):
+            continue
+        kpi_slide = _clone_slide(prs, IDX_BLANK_CANVAS)
+        _strip_guidance_shapes(kpi_slide)
+
+        table_title = (tbl_model.table_title or "KEY PERFORMANCE INDICATOR DASHBOARD").upper()
+        _set_slide_header_and_sub(kpi_slide, table_title, plan.facility_name)
+
+        headers = tbl_model.headers or ["Metric", "Actual", "Target"]
+        rows = tbl_model.rows
+        n_cols = len(headers)
+        n_rows = len(rows)
+
+        table_shape = kpi_slide.shapes.add_table(
+            n_rows + 1, n_cols,
+            Inches(0.40), Inches(1.45), Inches(12.53),
+            min(Inches(5.20), int(Inches(0.48 * (n_rows + 1))))
+        )
+        tbl = table_shape.table
+
+        for c_idx, h in enumerate(headers):
+            cell = tbl.cell(0, c_idx)
+            cell.fill.solid()
+            cell.fill.fore_color.rgb = RGBColor(0, 43, 73)
+            cell.text = str(h)
+            cell.margin_left = Inches(0.08)
+            cell.margin_right = Inches(0.08)
+            for p in cell.text_frame.paragraphs:
+                for r in p.runs:
+                    r.font.name = "Verdana"
+                    r.font.size = Pt(11)
+                    r.font.bold = True
+                    r.font.color.rgb = RGBColor(255, 255, 255)
+
+        max_c_len = max((len(str(val)) for row in rows for val in row), default=0)
+        if max_c_len > 70 or n_rows >= 8:
+            row_font_sz = Pt(9.0)
+        elif max_c_len > 40:
+            row_font_sz = Pt(10.0)
+        else:
+            row_font_sz = Pt(10.5)
+
+        for r_idx, row in enumerate(rows):
+            for c_idx in range(n_cols):
+                val = str(row[c_idx]) if c_idx < len(row) else ""
+                cell = tbl.cell(r_idx + 1, c_idx)
+                cell.text = val
+                cell.fill.solid()
+                if r_idx % 2 == 0:
+                    cell.fill.fore_color.rgb = RGBColor(245, 248, 252)
+                else:
+                    cell.fill.fore_color.rgb = RGBColor(255, 255, 255)
+                cell.margin_left = Inches(0.08)
+                cell.margin_right = Inches(0.08)
+                for p in cell.text_frame.paragraphs:
+                    for r in p.runs:
+                        r.font.name = "Verdana"
+                        r.font.size = row_font_sz
+                        r.font.color.rgb = RGBColor(0, 43, 73)
+
+
+def _dispatch_kpi_dashboard(prs: Any, plan: HLDQBRPresentationPlan) -> None:
+    """Mutually exclusive with kpi_tables (matches the template's single dashboard slide)."""
+    if _get_table_list(plan):
+        return
+    if not (plan.kpi_safety_quality or plan.kpi_operational):
+        return
+    kpi_slide = _clone_slide(prs, IDX_KPI_DASHBOARD)
+    _set_or_remove_facility_placeholder(kpi_slide, plan.facility_name)
+    kpi_dash_title = _shape_by_name(kpi_slide, "Title 2")
+    if kpi_dash_title is not None:
+        _set_first_run_text(kpi_dash_title, (plan.kpi_dashboard_title or "KEY PERFORMANCE INDICATOR DASHBOARD").strip().upper())
+    kpi_tables = [s for s in kpi_slide.shapes if s.has_table]
+    sq_shape = next((s for s in kpi_tables if len(s.table.columns) == 7), None)
+    op_shape = next((s for s in kpi_tables if len(s.table.columns) == 3), None)
+
+    if plan.kpi_safety_quality and sq_shape is not None:
+        sq_tbl = sq_shape.table
+        for i, row in enumerate(plan.kpi_safety_quality):
+            r = 2 + i
+            if r < len(sq_tbl.rows):
+                sq_tbl.cell(r, 0).text = row.label
+                for c in (1, 4):
+                    sq_tbl.cell(r, c).text = row.actual
+                for c in (2, 5):
+                    sq_tbl.cell(r, c).text = row.target or "-"
+                for c in (3, 6):
+                    sq_tbl.cell(r, c).text = row.actual
+                for c_idx in range(len(sq_tbl.columns)):
+                    for para in sq_tbl.cell(r, c_idx).text_frame.paragraphs:
+                        for run in para.runs:
+                            run.font.name = "Verdana"
+                            run.font.size = Pt(9.5)
+                            run.font.color.rgb = RGBColor(0, 43, 73)
+        for r in range(2 + len(plan.kpi_safety_quality), len(sq_tbl.rows)):
+            for c in range(len(sq_tbl.columns)):
+                sq_tbl.cell(r, c).text = ""
+    elif sq_shape is not None:
+        kpi_slide.shapes._spTree.remove(sq_shape._element)
+        if op_shape is not None:
+            op_shape.top = Inches(1.40)
+
+    if plan.kpi_operational and op_shape is not None:
+        op_tbl = op_shape.table
+        op_tbl.cell(0, 0).text = "Operational Metric"
+        op_tbl.cell(0, 1).text = "Actual"
+        op_tbl.cell(0, 2).text = "Target"
+        rows = [[r.label, r.actual, (r.target or "").strip() or "-"] for r in plan.kpi_operational]
+        _fill_table_rows(op_tbl, rows, start_row=1)
+    elif op_shape is not None and not plan.kpi_operational:
+        kpi_slide.shapes._spTree.remove(op_shape._element)
+
+
+def _dispatch_stat_highlights(prs: Any, plan: HLDQBRPresentationPlan) -> None:
+    if not plan.stat_highlights:
+        return
+    stat_slide = _clone_slide(prs, IDX_BLANK_CANVAS)
+    _strip_guidance_shapes(stat_slide)
+    _set_slide_header_and_sub(stat_slide, plan.stat_highlights_title or "PERFORMANCE AT A GLANCE", plan.facility_name)
+    _render_stat_highlights(stat_slide, plan.stat_highlights)
+
+
+def _dispatch_process_flow(prs: Any, plan: HLDQBRPresentationPlan) -> None:
+    if not plan.process_flow:
+        return
+    flow_slide = _clone_slide(prs, IDX_BLANK_CANVAS)
+    _strip_guidance_shapes(flow_slide)
+    _set_slide_header_and_sub(flow_slide, plan.process_flow_title or "PROCESS OVERVIEW", plan.facility_name)
+    _render_process_flow(flow_slide, plan.process_flow)
+
+
+def _dispatch_voice_of_customer(prs: Any, plan: HLDQBRPresentationPlan) -> None:
+    if not (plan.voice_of_customer and plan.voice_of_customer.quote):
+        return
+    voc_slide = _clone_slide(prs, IDX_VOICE_OF_CUSTOMER)
+    _remove_shapes(voc_slide, lambda s: s.name == "TextBox 5")  # stale guidance placeholder
+    voc_title = _shape_by_name(voc_slide, "Title 2")
+    if voc_title is not None:
+        _set_first_run_text(voc_title, (plan.voice_of_customer_title or "VOICE OF THE CUSTOMER").strip().upper())
+    bubble = _shape_by_name(voc_slide, "Speech Bubble: Rectangle with Corners Rounded 4")
+    if bubble is not None:
+        paras = bubble.text_frame.paragraphs
+        if paras and paras[0].runs:
+            paras[0].runs[0].text = plan.voice_of_customer.quote
+        if len(paras) > 2 and paras[2].runs:
+            paras[2].runs[0].text = plan.voice_of_customer.attribution
+
+
+def _dispatch_divider_ci(prs: Any, plan: HLDQBRPresentationPlan) -> None:
+    if not (plan.gemba_walk or plan.ci_tracker):
+        return
+    ci_divider = _clone_slide(prs, IDX_SECTION_CIP)
+    t2 = _shape_by_name(ci_divider, "Title 6")
+    if t2 is not None:
+        _set_first_run_text(t2, plan.ci_section_title or "CONTINUOUS IMPROVEMENT PROGRAM UPDATES")
+
+
+def _dispatch_gemba_walk(prs: Any, plan: HLDQBRPresentationPlan) -> None:
+    if not plan.gemba_walk:
+        return
+    gemba_slide = _clone_slide(prs, IDX_GEMBA_WALK)
+    _strip_guidance_shapes(gemba_slide)
+    gemba_title = _shape_by_name(gemba_slide, "Title 2")
+    if gemba_title is not None:
+        _set_first_run_text(gemba_title, (plan.gemba_walk_title or "FACILITY WALKTHROUGH FINDINGS").strip().upper())
+    gemba_intro = _shape_by_name(gemba_slide, "TextBox 6")
+    if gemba_intro is not None and plan.gemba_walk_intro:
+        _set_first_run_text(gemba_intro, plan.gemba_walk_intro)
+    gemba_table_shape = _shape_by_name(gemba_slide, "Table 5")
+    if gemba_table_shape is not None and gemba_table_shape.has_table:
+        rows = [[r.area, r.observation] for r in plan.gemba_walk]
+        _fill_table_rows(gemba_table_shape.table, rows, start_row=1)
+
+
+def _dispatch_ci_tracker(prs: Any, plan: HLDQBRPresentationPlan) -> None:
+    if not plan.ci_tracker:
+        return
+    ci_tracker_slide = _clone_slide(prs, IDX_CI_TRACKER)
+    _strip_guidance_shapes(ci_tracker_slide)
+    _strip_decorative_connectors(ci_tracker_slide)
+    ci_tracker_title = _shape_by_name(ci_tracker_slide, "Title 2")
+    if ci_tracker_title is not None:
+        _set_first_run_text(ci_tracker_title, (plan.ci_tracker_title or "IMPROVEMENT INITIATIVE TRACKER").strip().upper())
+    ci_table_shape = _shape_by_name(ci_tracker_slide, "Table 4")
+    if ci_table_shape is not None and ci_table_shape.has_table:
+        rows = [[r.activity, r.category, r.status, r.value, r.comment] for r in plan.ci_tracker]
+        _fill_table_rows(ci_table_shape.table, rows, start_row=1)
+
+
+def _dispatch_divider_quality(prs: Any, plan: HLDQBRPresentationPlan) -> None:
+    if not (plan.quality_org_structure or plan.nc_review_narrative or plan.nc_review_summary or plan.nc_tracker):
+        return
+    quality_divider = _clone_slide(prs, IDX_SECTION_QUALITY)
+    t3 = _shape_by_name(quality_divider, "Title 6")
+    if t3 is not None:
+        _set_first_run_text(t3, plan.quality_section_title or "QUALITY MANAGEMENT SYSTEM UPDATES")
+
+
+def _dispatch_quality_org_structure(prs: Any, plan: HLDQBRPresentationPlan) -> None:
+    if not plan.quality_org_structure:
+        return
+    quality_org_slide = _clone_slide(prs, IDX_QUALITY_ORG)
+    _strip_guidance_shapes(quality_org_slide)
+    quality_title = _shape_by_name(quality_org_slide, "Title 1")
+    if quality_title is not None:
+        _set_first_run_text(quality_title, (plan.quality_org_structure_title or "QUALITY & COMPLIANCE LEADERSHIP").strip().upper())
+    quality_boxes = sorted(
+        (s for s in quality_org_slide.shapes if s.name.startswith("Rectangle: Rounded Corners")),
+        key=lambda s: (s.top, s.left),
+    )
+    for box, person in zip(quality_boxes, plan.quality_org_structure):
+        _set_org_box(box, person.name, f"{person.role}\nUPS Healthcare")
+    for box in quality_boxes[len(plan.quality_org_structure):]:
+        _set_org_box(box, "", "")
+
+
+def _dispatch_nc_review(prs: Any, plan: HLDQBRPresentationPlan) -> None:
+    if not (plan.nc_review_narrative or plan.nc_review_summary):
+        return
+    nc_review_slide = _clone_slide(prs, IDX_NC_REVIEW)
+    _strip_guidance_shapes(nc_review_slide)
+    _set_or_remove_facility_placeholder(nc_review_slide, plan.facility_name)
+    nc_review_title = _shape_by_name(nc_review_slide, "Title 2")
+    if nc_review_title is not None:
+        _set_first_run_text(nc_review_title, (plan.nc_review_title or "ISSUE REVIEW & CAPA SUMMARY").strip().upper())
+    nc_narrative = _shape_by_name(nc_review_slide, "TextBox 7")
+    if nc_narrative is not None and plan.nc_review_narrative:
+        nc_narrative.text_frame.text = plan.nc_review_narrative
+    nc_summary_table = _shape_by_name(nc_review_slide, "Table 5")
+    if nc_summary_table is not None and nc_summary_table.has_table and plan.nc_review_summary:
+        tbl = nc_summary_table.table
+        for c_idx, val in enumerate(plan.nc_review_summary[: len(tbl.columns)]):
+            tbl.cell(1, c_idx).text = val
+
+
+def _dispatch_nc_tracker(prs: Any, plan: HLDQBRPresentationPlan) -> None:
+    if not plan.nc_tracker:
+        return
+    nc_tracker_slide = _clone_slide(prs, IDX_NC_TRACKER)
+    _strip_guidance_shapes(nc_tracker_slide)
+    _strip_decorative_connectors(nc_tracker_slide)
+    nc_tracker_title = _shape_by_name(nc_tracker_slide, "Title 2")
+    if nc_tracker_title is not None:
+        _set_first_run_text(nc_tracker_title, (plan.nc_tracker_title or "ISSUE & CORRECTIVE ACTION TRACKER").strip().upper())
+    nc_tracker_table = _shape_by_name(nc_tracker_slide, "Table 4")
+    if nc_tracker_table is not None and nc_tracker_table.has_table:
+        rows = [[r.period, r.nc_id, r.event, r.due_date, r.status] for r in plan.nc_tracker]
+        _fill_table_rows(nc_tracker_table.table, rows, start_row=1)
+
+
+def _dispatch_next_steps(prs: Any, plan: HLDQBRPresentationPlan) -> None:
+    if not plan.next_steps:
+        return
+    next_steps_slide = _clone_slide(prs, IDX_NEXT_STEPS)
+    _set_or_remove_facility_placeholder(next_steps_slide, plan.facility_name)
+
+    ns_title = _shape_by_name(next_steps_slide, "Title 1")
+    if ns_title is not None and ns_title.text_frame.paragraphs:
+        heading_text = (
+            plan.next_steps_title.strip().upper()
+            if plan.next_steps_title
+            else "NEXT STEPS & TARGET TIMELINES"
+        )
+        p0 = ns_title.text_frame.paragraphs[0]
+        p0.text = heading_text
+        if p0.runs:
+            p0.runs[0].font.size = Pt(22)
+            p0.runs[0].font.bold = True
+
+    ns_table_shape = _shape_by_name(next_steps_slide, "Table 8")
+    if ns_table_shape is not None and ns_table_shape.has_table:
+        tbl = ns_table_shape.table
+        tbl._tbl.tblPr.set("firstRow", "0")
+        rows = [
+            [s.step, (s.date or "").strip() or "Target Q4 2026"]
+            for s in plan.next_steps
+        ]
+        _fill_table_rows(tbl, rows, start_row=0, text_color=RGBColor(0, 43, 73))
+
+
+ARCHETYPE_DISPATCH: Dict[str, Any] = {
+    "org_structure": _dispatch_org_structure,
+    "achievements": _dispatch_achievements,
+    "priorities": _dispatch_priorities,
+    "DIVIDER_PERFORMANCE": _dispatch_divider_performance,
+    "action_tracker": _dispatch_action_tracker,
+    "charts": _dispatch_charts,
+    "kpi_tables": _dispatch_kpi_tables,
+    "kpi_dashboard": _dispatch_kpi_dashboard,
+    "stat_highlights": _dispatch_stat_highlights,
+    "process_flow": _dispatch_process_flow,
+    "voice_of_customer": _dispatch_voice_of_customer,
+    "DIVIDER_CI": _dispatch_divider_ci,
+    "gemba_walk": _dispatch_gemba_walk,
+    "ci_tracker": _dispatch_ci_tracker,
+    "DIVIDER_QUALITY": _dispatch_divider_quality,
+    "quality_org_structure": _dispatch_quality_org_structure,
+    "nc_review_summary": _dispatch_nc_review,
+    "nc_tracker": _dispatch_nc_tracker,
+    "next_steps": _dispatch_next_steps,
+}
+
+# Fallback sequence when the LLM's narrative order is missing/invalid — mirrors
+# the deck's original fixed order so behavior is unchanged unless a valid
+# LLM-authored order is supplied (see llm/prompts_hld_qbr.py's selection prompt).
+DEFAULT_ARCHETYPE_ORDER: List[str] = [
+    "org_structure", "achievements", "priorities",
+    "DIVIDER_PERFORMANCE", "action_tracker", "charts", "kpi_tables", "kpi_dashboard",
+    "stat_highlights", "process_flow", "voice_of_customer",
+    "DIVIDER_CI", "gemba_walk", "ci_tracker",
+    "DIVIDER_QUALITY", "quality_org_structure", "nc_review_summary", "nc_tracker",
+    "next_steps",
+]
+
+
+def _resolve_archetype_order(plan: HLDQBRPresentationPlan) -> List[str]:
+    """Validates the LLM-provided narrative order against the known dispatch
+    keys; falls back to the default fixed order if missing/invalid so the
+    pipeline never breaks on a bad or absent order. Any dispatch key the LLM's
+    order omitted is appended at the end so real content is never dropped."""
+    order = list(getattr(plan, "narrative_order", None) or [])
+    valid = [key for key in order if key in ARCHETYPE_DISPATCH]
+    if not valid:
+        return DEFAULT_ARCHETYPE_ORDER
+    missing = [key for key in DEFAULT_ARCHETYPE_ORDER if key not in valid]
+    return valid + missing
+
+
 class HLDQBRBuilder:
     """Builds an HLD QBR-branded .pptx from a validated HLDQBRPresentationPlan."""
-
     def __init__(self, template_path=None):
         self.template_path = template_path or config.HLD_QBR_TEMPLATE_FILE
 
@@ -766,808 +1769,11 @@ class HLDQBRBuilder:
                 r.font.size = Pt(11.5 if len(body) < 130 else 10.5)
                 r.font.color.rgb = RGBColor(30, 41, 59)
 
-        # 4. Organizational Structure (optional)
-        if plan.org_structure:
-            org_slide = _clone_slide(prs, IDX_ORG_STRUCTURE)
-            org_boxes = sorted(
-                (s for s in org_slide.shapes if s.name.startswith("Rectangle: Rounded Corners")),
-                key=lambda s: (s.top, s.left),
-            )
-            for box, person in zip(org_boxes, plan.org_structure):
-                if person.name:
-                    _set_org_box(box, person.name, person.role)
-            # Blank leftover template sample cards beyond the supplied people
-            for box in org_boxes[len(plan.org_structure):]:
-                _set_org_box(box, "", "")
-
-        # 4. Previous Quarter Achievements (optional)
-        if plan.achievements:
-            achievements_slide = _clone_slide(prs, IDX_ACHIEVEMENTS)
-            _strip_guidance_shapes(achievements_slide)
-            _set_or_remove_facility_placeholder(achievements_slide, plan.facility_name)
-
-            # Dynamic heading: use plan.achievements_title or fall back to a generic label
-            ach_title = _shape_by_name(achievements_slide, "Title 2")
-            if ach_title is None:
-                ach_title = _shape_by_name(achievements_slide, "Title 6")
-            if ach_title is not None and ach_title.text_frame.paragraphs:
-                heading_text = (
-                    plan.achievements_title.strip().upper()
-                    if plan.achievements_title
-                    else "PRIOR QUARTER MILESTONES & WINS"
-                )
-                p0 = ach_title.text_frame.paragraphs[0]
-                p0.text = heading_text
-                if p0.runs:
-                    p0.runs[0].font.size = Pt(22)
-                    p0.runs[0].font.bold = True
-
-            milestone_boxes = sorted(
-                (s for s in achievements_slide.shapes if s.name == "Content Placeholder 42"),
-                key=lambda s: s.top,
-            )
-            connectors = sorted(
-                (s for s in achievements_slide.shapes if s.name.startswith("Flowchart: Connector")),
-                key=lambda s: s.top,
-            )
-
-            n_ach = len(plan.achievements)
-            max_ach_len = max(len(t) for t in plan.achievements) if plan.achievements else 0
-
-            # Dynamic vertical spacing: distribute evenly across canvas
-            TOP_MIN = 1200000  # ~1.31 inches
-            TOP_MAX = 5400000  # ~5.91 inches
-            spacing = (TOP_MAX - TOP_MIN) // (n_ach - 1) if n_ach > 1 else 0
-
-            # Dynamic typography scaling
-            if max_ach_len > 140 or n_ach >= 5:
-                ach_font_sz = Pt(11.0)
-            elif max_ach_len > 80:
-                ach_font_sz = Pt(12.5)
-            else:
-                ach_font_sz = Pt(13.5)
-
-            for i, (text, box, conn) in enumerate(zip(plan.achievements, milestone_boxes, connectors)):
-                new_top = TOP_MIN + i * spacing if n_ach > 1 else (TOP_MIN + TOP_MAX) // 2
-                conn.top = int(new_top)
-                box.top = int(new_top)
-                box.height = int(Inches(0.65))
-                box.text_frame.word_wrap = True
-
-                p = box.text_frame.paragraphs[0]
-                p.text = text
-                pPr = p._p.find(qn("a:pPr"))
-                if pPr is not None:
-                    lnSpc = pPr.find(qn("a:lnSpc"))
-                    if lnSpc is not None:
-                        pPr.remove(lnSpc)
-                for r in p.runs:
-                    r.font.name = "Verdana"
-                    r.font.size = ach_font_sz
-                    r.font.color.rgb = RGBColor(0, 43, 73)
-
-                p_c = conn.text_frame.paragraphs[0]
-                p_c.text = str(i + 1)
-                for r in p_c.runs:
-                    r.font.name = "Verdana"
-                    r.font.bold = True
-                    r.font.size = Pt(12)
-
-            for box in milestone_boxes[n_ach:]:
-                achievements_slide.shapes._spTree.remove(box._element)
-            for conn in connectors[n_ach:]:
-                achievements_slide.shapes._spTree.remove(conn._element)
-
-        # 5. Customer Priorities (optional)
-        if plan.priorities:
-            priorities_slide = _clone_slide(prs, IDX_PRIORITIES)
-            _strip_guidance_shapes(priorities_slide)
-            _set_or_remove_facility_placeholder(priorities_slide, plan.facility_name)
-
-            # Dynamic heading: use plan.priorities_title or compose from facility name
-            priority_title = _shape_by_name(priorities_slide, "Title 2")
-            if priority_title is not None and priority_title.text_frame.paragraphs:
-                p0 = priority_title.text_frame.paragraphs[0]
-                heading_text = (
-                    plan.priorities_title.strip().upper()
-                    if plan.priorities_title
-                    else (
-                        f"{plan.facility_name.upper()} STRATEGIC PRIORITIES"
-                        if plan.facility_name
-                        else "STRATEGIC PRIORITIES & FOCUS AREAS"
-                    )
-                )
-                p0.text = heading_text
-                if p0.runs:
-                    p0.runs[0].font.size = Pt(22)
-                    p0.runs[0].font.bold = True
-
-            # Dynamic column layout and widths based on priority count
-            n_p = len(plan.priorities)
-            SLIDE_WIDTH = 12192000  # 13.333 inches
-
-            if n_p == 2:
-                CARD_WIDTH_EMU = int(4.00 * 914400)
-                CIRCLE_CENTERS = [int(SLIDE_WIDTH * 0.30), int(SLIDE_WIDTH * 0.70)]
-            elif n_p == 1:
-                CARD_WIDTH_EMU = int(5.50 * 914400)
-                CIRCLE_CENTERS = [int(SLIDE_WIDTH * 0.50)]
-            else:
-                CARD_WIDTH_EMU = int(3.25 * 914400)
-                CIRCLE_CENTERS = [2031252, 5987374, 10056673]
-
-            # Dynamic line estimation for headings
-            p_width_in = (CARD_WIDTH_EMU - int(0.20 * 914400)) / 914400
-            chars_per_line = int(p_width_in * 9.5)
-            max_head_lines = max(
-                max(1, math.ceil(len(p.heading.strip()) / chars_per_line))
-                for p in plan.priorities
-            ) if plan.priorities else 1
-
-            if max_head_lines >= 3:
-                target_body_top = 4450000
-            elif max_head_lines == 2:
-                target_body_top = 4220000
-            else:
-                target_body_top = 3939696
-
-            priority_groups = sorted(
-                (s for s in priorities_slide.shapes if s.shape_type == 6),
-                key=lambda s: s.left,
-            )
-            for col_idx, (group, item) in enumerate(zip(priority_groups, plan.priorities)):
-                center_x = (
-                    CIRCLE_CENTERS[col_idx]
-                    if col_idx < len(CIRCLE_CENTERS)
-                    else group.left + (group.width // 2)
-                )
-                _fill_priority_group(
-                    group,
-                    item.heading,
-                    item.body,
-                    center_x=center_x,
-                    card_width=CARD_WIDTH_EMU,
-                    target_body_top=target_body_top,
-                )
-            for group in priority_groups[len(plan.priorities):]:
-                priorities_slide.shapes._spTree.remove(group._element)
-
-        # 6. Section divider: Performance Management (only if any perf content exists)
-        chart_list = list(plan.charts) if plan.charts else ([plan.operational_chart] if plan.operational_chart else [])
-        table_list = list(plan.kpi_tables) if plan.kpi_tables else []
-        has_perf_section = bool(
-            plan.action_tracker
-            or table_list
-            or plan.kpi_safety_quality
-            or plan.kpi_operational
-            or any(c and c.categories and c.series for c in chart_list)
-        )
-        if has_perf_section:
-            perf_divider = _clone_slide(prs, IDX_SECTION_PERF_MGMT)
-            t = _shape_by_name(perf_divider, "Title 6")
-            if t is not None:
-                # Use LLM-generated section_heading; fall back to generic operational heading
-                heading = (
-                    plan.section_heading.strip().upper()
-                    if plan.section_heading
-                    else "OPERATIONAL PERFORMANCE & DATA REVIEW"
-                )
-                _set_first_run_text(t, heading)
-
-        # 7. Action Item Tracker (optional)
-        if plan.action_tracker:
-            tracker = _clone_slide(prs, IDX_TRACKER)
-            _strip_guidance_shapes(tracker)
-            _set_or_remove_facility_placeholder(tracker, plan.facility_name)
-
-            # Dynamic tracker slide title
-            tracker_title = _shape_by_name(tracker, "Title 2")
-            if tracker_title is None:
-                tracker_title = _shape_by_name(tracker, "Title 6")
-            if tracker_title is None:
-                tracker_title = _shape_by_name(tracker, "Title 1")
-            if tracker_title is not None and tracker_title.text_frame.paragraphs:
-                heading_text = (
-                    plan.action_tracker_title.strip().upper()
-                    if plan.action_tracker_title
-                    else "OPEN ACTION ITEMS & ACCOUNTABILITY"
-                )
-                p0 = tracker_title.text_frame.paragraphs[0]
-                p0.text = heading_text
-                if p0.runs:
-                    p0.runs[0].font.size = Pt(22)
-                    p0.runs[0].font.bold = True
-
-            table_shape = _shape_by_name(tracker, "Table 4")
-            if table_shape is not None and table_shape.has_table:
-                # Leave status cell text empty so dynamic status dot sits unobstructed
-                rows = [[r.project, r.owner, r.next_step, r.comment, ""] for r in plan.action_tracker]
-                _fill_table_rows(table_shape.table, rows, start_row=1, prune_unused_rows=False)
-                _apply_table_status_dots(tracker, table_shape, status_column_idx=4, action_items=plan.action_tracker)
-
-        # 8. Operational Charts (dynamic multi-chart support)
-        # Clone from slide 21 (blank branded canvas, index 20) for a clean chart layout,
-        # then build title, chart, and observation card from scratch.
-        TEMPLATE_CHART_INDICES = [IDX_BLANK_CANVAS]  # Blank branded canvas
-        for chart_idx, chart_model in enumerate(chart_list):
-            if not (chart_model and chart_model.categories and chart_model.series):
-                continue
-            template_s_idx = TEMPLATE_CHART_INDICES[0]  # Always use blank slide 21
-            chart_slide = _clone_slide(prs, template_s_idx)
-            _strip_guidance_shapes(chart_slide)
-            _strip_decorative_connectors(chart_slide)
-
-            chart_title = (chart_model.chart_title or "OPERATIONAL PERFORMANCE SNAPSHOT").upper()
-            _set_slide_header_and_sub(chart_slide, chart_title, plan.facility_name)
-
-            chart_shape = next((s for s in chart_slide.shapes if s.has_chart), None)
-
-            # For blank canvas (slide 21), add a chart programmatically
-            if chart_shape is None:
-                from pptx.enum.chart import XL_CHART_TYPE
-                chart_data_new = CategoryChartData()
-                chart_data_new.categories = chart_model.categories
-                for ser in chart_model.series:
-                    chart_data_new.add_series(ser.name, ser.values)
-
-                # Insights card dimensions (will be resized later)
-                has_insights = bool(chart_model.insights)
-                if has_insights:
-                    chart_left = Inches(0.40)
-                    chart_top = Inches(1.30)
-                    chart_width = Inches(8.50)
-                    chart_height = Inches(5.45)
-                else:
-                    chart_left = Inches(0.40)
-                    chart_top = Inches(1.30)
-                    chart_width = Inches(12.50)
-                    chart_height = Inches(5.45)
-
-                chart_shape = chart_slide.shapes.add_chart(
-                    XL_CHART_TYPE.COLUMN_CLUSTERED,
-                    chart_left, chart_top, chart_width, chart_height,
-                    chart_data_new,
-                )
-                c = chart_shape.chart
-                c.has_title = False
-                c.has_legend = len(chart_model.series) > 1
-                if c.has_legend:
-                    c.legend.position = XL_LEGEND_POSITION.TOP
-                    c.legend.include_in_layout = False
-                    try:
-                        c.legend.font.name = "Verdana"
-                        c.legend.font.size = Pt(10)
-                    except Exception:
-                        pass
-                try:
-                    c.category_axis.tick_labels.font.name = "Verdana"
-                    c.category_axis.tick_labels.font.size = Pt(9)
-                    c.value_axis.tick_labels.font.name = "Verdana"
-                    c.value_axis.tick_labels.font.size = Pt(9)
-                except Exception:
-                    pass
-                try:
-                    if c.plots:
-                        plot = c.plots[0]
-                        plot.vary_by_categories = False
-                        plot.has_data_labels = True
-                        plot.data_labels.font.name = "Verdana"
-                        plot.data_labels.font.size = Pt(8)
-                        for s_idx, ser in enumerate(plot.series):
-                            color = TEMPLATE_SERIES_COLORS[s_idx % len(TEMPLATE_SERIES_COLORS)]
-                            try:
-                                fill = ser.format.fill
-                                fill.solid()
-                                fill.fore_color.rgb = color
-                            except Exception:
-                                pass
-                except Exception:
-                    pass
-
-                # Build the insights card if provided
-                if has_insights:
-                    insights = chart_model.insights
-                    n_items = len(insights)
-                    total_chars = sum(len(it) for it in insights)
-                    max_chars = max(len(it) for it in insights) if insights else 0
-
-                    CARD_LEFT = Inches(9.10)
-                    CARD_TOP = Inches(1.30)
-                    CARD_WIDTH = Inches(3.80)
-                    CARD_HEIGHT = Inches(5.45)
-
-                    insights_title_text = (getattr(chart_model, "insights_title", None) or "KEY OBSERVATIONS").strip().upper()
-
-                    # 1. Main Insight Card Container (Rounded Rectangle, Deep Navy)
-                    blue_card = chart_slide.shapes.add_shape(
-                        MSO_SHAPE.ROUNDED_RECTANGLE,
-                        CARD_LEFT, CARD_TOP, CARD_WIDTH, CARD_HEIGHT
-                    )
-                    blue_card.fill.solid()
-                    blue_card.fill.fore_color.rgb = RGBColor(0, 43, 73)
-                    blue_card.line.fill.background()
-
-                    # 2. Header Box inside card (Gold Text)
-                    header_shape = chart_slide.shapes.add_textbox(
-                        CARD_LEFT + Inches(0.20), CARD_TOP + Inches(0.20),
-                        CARD_WIDTH - Inches(0.40), Inches(0.40)
-                    )
-                    tf_h = header_shape.text_frame
-                    tf_h.margin_left = tf_h.margin_right = tf_h.margin_top = tf_h.margin_bottom = 0
-                    p_h = tf_h.paragraphs[0]
-                    p_h.text = insights_title_text
-                    for r in p_h.runs:
-                        r.font.name = "Verdana"
-                        r.font.size = Pt(11.5)
-                        r.font.bold = True
-                        r.font.color.rgb = RGBColor(255, 190, 0)  # UPS Gold
-
-                    # 3. Gold Accent Line below header
-                    accent_line = chart_slide.shapes.add_shape(
-                        MSO_SHAPE.RECTANGLE,
-                        CARD_LEFT + Inches(0.20), CARD_TOP + Inches(0.58),
-                        CARD_WIDTH - Inches(0.40), Inches(0.03)
-                    )
-                    accent_line.fill.solid()
-                    accent_line.fill.fore_color.rgb = RGBColor(255, 190, 0)
-                    accent_line.line.fill.background()
-
-                    # 4. Text Frame for Bullet Items
-                    text_box = chart_slide.shapes.add_textbox(
-                        CARD_LEFT + Inches(0.20), CARD_TOP + Inches(0.72),
-                        CARD_WIDTH - Inches(0.40), CARD_HEIGHT - Inches(0.85)
-                    )
-                    tf = text_box.text_frame
-                    tf.word_wrap = True
-                    tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
-
-                    estimated_lines = sum(max(1, math.ceil(len(item) / 45)) for item in insights)
-                    font_sz = (
-                        Pt(11.0) if estimated_lines <= 6 and n_items <= 3
-                        else Pt(10.0) if estimated_lines <= 9 and n_items <= 5
-                        else Pt(9.0) if estimated_lines <= 13
-                        else Pt(8.5)
-                    )
-                    for i, item in enumerate(insights):
-                        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
-                        p.space_after = Pt(8)
-                        p.text = f"• {item}"
-                        for r in p.runs:
-                            r.font.name = "Verdana"
-                            r.font.size = font_sz
-                            r.font.color.rgb = RGBColor(255, 255, 255)
-
-                continue  # Skip old code path for blank canvas
-
-            if chart_shape is not None:
-                c = chart_shape.chart
-                cd = CategoryChartData()
-                cd.categories = chart_model.categories
-                for ser in chart_model.series:
-                    cd.add_series(ser.name, ser.values)
-                c.replace_data(cd)
-
-                # Remove template's stale floating chart title ("Receipts")
-                c.has_title = False
-
-                if len(chart_model.series) > 1:
-                    c.has_legend = True
-                    c.legend.position = XL_LEGEND_POSITION.TOP
-                    c.legend.include_in_layout = False
-                    try:
-                        c.legend.font.name = "Verdana"
-                        c.legend.font.size = Pt(10)
-                    except Exception:
-                        pass
-
-                try:
-                    c.category_axis.tick_labels.font.name = "Verdana"
-                    c.category_axis.tick_labels.font.size = Pt(9)
-                    c.value_axis.tick_labels.font.name = "Verdana"
-                    c.value_axis.tick_labels.font.size = Pt(9)
-                except Exception:
-                    pass
-
-                try:
-                    if c.plots:
-                        plot = c.plots[0]
-                        plot.vary_by_categories = False
-                        plot.has_data_labels = True
-                        plot.data_labels.font.name = "Verdana"
-                        plot.data_labels.font.size = Pt(8)
-                        for s_idx, ser in enumerate(plot.series):
-                            color = TEMPLATE_SERIES_COLORS[s_idx % len(TEMPLATE_SERIES_COLORS)]
-                            try:
-                                fill = ser.format.fill
-                                fill.solid()
-                                fill.fore_color.rgb = color
-                            except Exception:
-                                pass
-                except Exception:
-                    pass
-
-            side_group = None
-            for cand_name in ["Group 11", "Group 7"]:
-                g = _shape_by_name(chart_slide, cand_name)
-                if g is not None:
-                    side_group = g
-                    break
-            if side_group is None:
-                for sh in chart_slide.shapes:
-                    if sh.shape_type == 6 and any("Rectangle" in sub.name for sub in getattr(sh, "shapes", [])):
-                        side_group = sh
-                        break
-
-            if side_group is not None:
-                if chart_model.insights:
-                    insights = chart_model.insights
-                    n_items = len(insights)
-                    total_chars = sum(len(it) for it in insights)
-                    avg_chars = total_chars / max(1, n_items)
-                    max_chars = max(len(it) for it in insights) if insights else 0
-
-                    TOTAL_CONTENT_WIDTH = Inches(12.533)
-                    CONTENT_LEFT = Inches(0.40)
-                    GAP = Inches(0.25)
-
-                    if max_chars > 85 or total_chars > 380 or (n_items >= 6 and avg_chars > 55):
-                        CARD_WIDTH = int(Inches(3.85))
-                    elif max_chars > 50 or total_chars > 200 or n_items >= 4:
-                        CARD_WIDTH = int(Inches(3.48))
-                    else:
-                        CARD_WIDTH = int(Inches(3.00))
-
-                    CHART_WIDTH = int(TOTAL_CONTENT_WIDTH - CARD_WIDTH - GAP)
-                    CHART_LEFT = int(CONTENT_LEFT)
-                    CARD_LEFT = int(CHART_LEFT + CHART_WIDTH + GAP)
-
-                    CARD_TOP = int(Inches(1.45))
-                    CARD_HEIGHT = int(Inches(5.25))
-
-                    if chart_shape is not None:
-                        chart_shape.left = CHART_LEFT
-                        chart_shape.top = int(Inches(1.40))
-                        chart_shape.width = CHART_WIDTH
-                        chart_shape.height = int(Inches(5.30))
-
-                    rect_names = {s.name for s in side_group.shapes if "Rectangle" in s.name or s.shape_type == 1}
-
-                    spTree = chart_slide.shapes._spTree
-                    for sp in list(side_group._element.xpath("p:sp")):
-                        spTree.append(sp)
-                    side_group.element.getparent().remove(side_group.element)
-
-                    unpacked_rects = [sh for sh in chart_slide.shapes if sh.name in rect_names]
-                    if len(unpacked_rects) >= 2:
-                        blue_card = max(unpacked_rects, key=lambda r: r.height)
-                        badge = min(unpacked_rects, key=lambda r: r.height)
-                    elif len(unpacked_rects) == 1:
-                        blue_card = unpacked_rects[0]
-                        badge = None
-                    else:
-                        blue_card = None
-                        badge = None
-
-                    # Strip any leftover standalone template badges (e.g. 'Q1 INSIGHTS') outside the group
-                    for s in list(chart_slide.shapes):
-                        if s not in (blue_card, badge) and s.has_text_frame and s.text_frame.text:
-                            txt = s.text_frame.text.strip().upper()
-                            if "INSIGHT" in txt or "OBSERVATION" in txt or "KPI SUMMARY REQUIRED" in txt:
-                                try:
-                                    chart_slide.shapes._spTree.remove(s._element)
-                                except Exception:
-                                    pass
-
-                    insights_title = (getattr(chart_model, "insights_title", None) or "KEY OBSERVATIONS").strip().upper()
-                    raw_badge_width = int(Inches(len(insights_title) * 0.125 + 0.40))
-                    BADGE_WIDTH = int(min(max(raw_badge_width, Inches(2.20)), CARD_WIDTH - Inches(0.35)))
-                    BADGE_HEIGHT = int(Inches(0.48))
-                    BADGE_LEFT = int(CARD_LEFT + (CARD_WIDTH - BADGE_WIDTH) // 2)
-                    BADGE_TOP = int(CARD_TOP - Inches(0.24))
-
-                    if badge is not None:
-                        badge.width = BADGE_WIDTH
-                        badge.height = BADGE_HEIGHT
-                        badge.left = BADGE_LEFT
-                        badge.top = BADGE_TOP
-                        tf_b = badge.text_frame
-                        tf_b.margin_left = Inches(0.05)
-                        tf_b.margin_right = Inches(0.05)
-                        tf_b.margin_top = Inches(0.05)
-                        tf_b.margin_bottom = Inches(0.05)
-                        tf_b.word_wrap = False
-                        p_b = tf_b.paragraphs[0]
-                        p_b.text = insights_title
-                        if len(insights_title) > 28:
-                            badge_font_sz = Pt(9.5)
-                        elif len(insights_title) > 20:
-                            badge_font_sz = Pt(10.5)
-                        else:
-                            badge_font_sz = Pt(12)
-                        for r in p_b.runs:
-                            r.font.name = "Verdana"
-                            r.font.size = badge_font_sz
-                            r.font.bold = True
-                            r.font.color.rgb = RGBColor(255, 190, 0)
-
-                    if blue_card is not None:
-                        blue_card.left = CARD_LEFT
-                        blue_card.top = CARD_TOP
-                        blue_card.width = CARD_WIDTH
-                        blue_card.height = CARD_HEIGHT
-                        tf = blue_card.text_frame
-                        tf.margin_left = Inches(0.18)
-                        tf.margin_right = Inches(0.18)
-                        tf.margin_top = Inches(0.45)
-                        tf.word_wrap = True
-
-                        sample_pPr = None
-                        if len(tf.paragraphs) > 1 and tf.paragraphs[1]._p.pPr is not None:
-                            sample_pPr = copy.deepcopy(tf.paragraphs[1]._p.pPr)
-                        tf.clear()
-
-                        printable_width_in = (CARD_WIDTH - Inches(0.36)) / Inches(1)
-                        chars_per_line = int(printable_width_in * 14.5)
-                        estimated_lines = sum(max(1, math.ceil(len(item) / chars_per_line)) for item in insights)
-
-                        if estimated_lines <= 6 and n_items <= 3:
-                            font_sz = Pt(11.5)
-                        elif estimated_lines <= 9 and n_items <= 5:
-                            font_sz = Pt(10.5)
-                        elif estimated_lines <= 13:
-                            font_sz = Pt(9.5)
-                        else:
-                            font_sz = Pt(8.5)
-
-                        for i, item in enumerate(insights):
-                            p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
-                            p.text = item
-                            p.font.name = "Verdana"
-                            p.font.size = font_sz
-                            for r in p.runs:
-                                r.font.name = "Verdana"
-                                r.font.size = font_sz
-                                r.font.color.rgb = RGBColor(255, 255, 255)
-                            if sample_pPr is not None:
-                                if p._p.pPr is not None:
-                                    p._p.remove(p._p.pPr)
-                                p._p.insert(0, copy.deepcopy(sample_pPr))
-                else:
-                    side_group.element.getparent().remove(side_group.element)
-                    if chart_shape is not None:
-                        chart_shape.left = Inches(0.40)
-                        chart_shape.width = Inches(12.50)
-
-        # 9. KPI / Structured Data Tables (dynamic multi-table support)
-        # Clone from slide 21 (blank branded canvas) and build table layout from scratch
-        if table_list:
-            for tbl_model in table_list:
-                if not (tbl_model and tbl_model.rows):
-                    continue
-                kpi_slide = _clone_slide(prs, IDX_BLANK_CANVAS)  # Blank branded canvas
-                _strip_guidance_shapes(kpi_slide)
-
-                table_title = (tbl_model.table_title or "KEY PERFORMANCE INDICATOR DASHBOARD").upper()
-                _set_slide_header_and_sub(kpi_slide, table_title, plan.facility_name)
-
-                headers = tbl_model.headers or ["Metric", "Actual", "Target"]
-                rows = tbl_model.rows
-                n_cols = len(headers)
-                n_rows = len(rows)
-
-                table_shape = kpi_slide.shapes.add_table(
-                    n_rows + 1, n_cols,
-                    Inches(0.40), Inches(1.45), Inches(12.53),
-                    min(Inches(5.20), int(Inches(0.48 * (n_rows + 1))))
-                )
-                tbl = table_shape.table
-
-                for c_idx, h in enumerate(headers):
-                    cell = tbl.cell(0, c_idx)
-                    cell.fill.solid()
-                    cell.fill.fore_color.rgb = RGBColor(0, 43, 73)
-                    cell.text = str(h)
-                    cell.margin_left = Inches(0.08)
-                    cell.margin_right = Inches(0.08)
-                    for p in cell.text_frame.paragraphs:
-                        for r in p.runs:
-                            r.font.name = "Verdana"
-                            r.font.size = Pt(11)
-                            r.font.bold = True
-                            r.font.color.rgb = RGBColor(255, 255, 255)
-
-                max_c_len = max((len(str(val)) for row in rows for val in row), default=0)
-                if max_c_len > 70 or n_rows >= 8:
-                    row_font_sz = Pt(9.0)
-                elif max_c_len > 40:
-                    row_font_sz = Pt(10.0)
-                else:
-                    row_font_sz = Pt(10.5)
-
-                for r_idx, row in enumerate(rows):
-                    for c_idx in range(n_cols):
-                        val = str(row[c_idx]) if c_idx < len(row) else ""
-                        cell = tbl.cell(r_idx + 1, c_idx)
-                        cell.text = val
-                        cell.fill.solid()
-                        if r_idx % 2 == 0:
-                            cell.fill.fore_color.rgb = RGBColor(245, 248, 252)
-                        else:
-                            cell.fill.fore_color.rgb = RGBColor(255, 255, 255)
-                        cell.margin_left = Inches(0.08)
-                        cell.margin_right = Inches(0.08)
-                        for p in cell.text_frame.paragraphs:
-                            for r in p.runs:
-                                r.font.name = "Verdana"
-                                r.font.size = row_font_sz
-                                r.font.color.rgb = RGBColor(0, 43, 73)
-
-        elif plan.kpi_safety_quality or plan.kpi_operational:
-            kpi_slide = _clone_slide(prs, IDX_KPI_DASHBOARD)
-            _set_or_remove_facility_placeholder(kpi_slide, plan.facility_name)
-            kpi_tables = [s for s in kpi_slide.shapes if s.has_table]
-            sq_shape = next((s for s in kpi_tables if len(s.table.columns) == 7), None)
-            op_shape = next((s for s in kpi_tables if len(s.table.columns) == 3), None)
-
-            if plan.kpi_safety_quality and sq_shape is not None:
-                sq_tbl = sq_shape.table
-                for i, row in enumerate(plan.kpi_safety_quality):
-                    r = 2 + i
-                    if r < len(sq_tbl.rows):
-                        sq_tbl.cell(r, 0).text = row.label
-                        for c in (1, 4):
-                            sq_tbl.cell(r, c).text = row.actual
-                        for c in (2, 5):
-                            sq_tbl.cell(r, c).text = row.target or "-"
-                        for c in (3, 6):
-                            sq_tbl.cell(r, c).text = row.actual
-                        for c_idx in range(len(sq_tbl.columns)):
-                            for para in sq_tbl.cell(r, c_idx).text_frame.paragraphs:
-                                for run in para.runs:
-                                    run.font.name = "Verdana"
-                                    run.font.size = Pt(9.5)
-                                    run.font.color.rgb = RGBColor(0, 43, 73)
-                for r in range(2 + len(plan.kpi_safety_quality), len(sq_tbl.rows)):
-                    for c in range(len(sq_tbl.columns)):
-                        sq_tbl.cell(r, c).text = ""
-            elif sq_shape is not None:
-                kpi_slide.shapes._spTree.remove(sq_shape._element)
-                if op_shape is not None:
-                    op_shape.top = Inches(1.40)
-
-            if plan.kpi_operational and op_shape is not None:
-                op_tbl = op_shape.table
-                op_tbl.cell(0, 0).text = "Operational Metric"
-                op_tbl.cell(0, 1).text = "Actual"
-                op_tbl.cell(0, 2).text = "Target"
-                rows = [[r.label, r.actual, (r.target or "").strip() or "-"] for r in plan.kpi_operational]
-                _fill_table_rows(op_tbl, rows, start_row=1)
-            elif op_shape is not None and not plan.kpi_operational:
-                kpi_slide.shapes._spTree.remove(op_shape._element)
-
-        # 9. Voice of the Customer (optional)
-        if plan.voice_of_customer and plan.voice_of_customer.quote:
-            voc_slide = _clone_slide(prs, IDX_VOICE_OF_CUSTOMER)
-            _remove_shapes(voc_slide, lambda s: s.name == "TextBox 5")  # stale guidance placeholder
-            bubble = _shape_by_name(voc_slide, "Speech Bubble: Rectangle with Corners Rounded 4")
-            if bubble is not None:
-                paras = bubble.text_frame.paragraphs
-                if paras and paras[0].runs:
-                    paras[0].runs[0].text = plan.voice_of_customer.quote
-                if len(paras) > 2 and paras[2].runs:
-                    paras[2].runs[0].text = plan.voice_of_customer.attribution
-
-        # 10. Section divider: Continuous Improvement (only if any CI content exists)
-        has_ci_section = bool(plan.gemba_walk or plan.ci_tracker)
-        if has_ci_section:
-            ci_divider = _clone_slide(prs, IDX_SECTION_CIP)
-            t2 = _shape_by_name(ci_divider, "Title 6")
-            if t2 is not None:
-                _set_first_run_text(t2, plan.ci_section_title or "CONTINUOUS IMPROVEMENT PROGRAM UPDATES")
-
-        # 11. Gemba Walk Summary (optional)
-        if plan.gemba_walk:
-            gemba_slide = _clone_slide(prs, IDX_GEMBA_WALK)
-            _strip_guidance_shapes(gemba_slide)
-            gemba_intro = _shape_by_name(gemba_slide, "TextBox 6")
-            if gemba_intro is not None and plan.gemba_walk_intro:
-                _set_first_run_text(gemba_intro, plan.gemba_walk_intro)
-            gemba_table_shape = _shape_by_name(gemba_slide, "Table 5")
-            if gemba_table_shape is not None and gemba_table_shape.has_table:
-                rows = [[r.area, r.observation] for r in plan.gemba_walk]
-                _fill_table_rows(gemba_table_shape.table, rows, start_row=1)
-
-        # 12. CI Activity Tracker (optional)
-        if plan.ci_tracker:
-            ci_tracker_slide = _clone_slide(prs, IDX_CI_TRACKER)
-            _strip_guidance_shapes(ci_tracker_slide)
-            _strip_decorative_connectors(ci_tracker_slide)
-            ci_table_shape = _shape_by_name(ci_tracker_slide, "Table 4")
-            if ci_table_shape is not None and ci_table_shape.has_table:
-                rows = [[r.activity, r.category, r.status, r.value, r.comment] for r in plan.ci_tracker]
-                _fill_table_rows(ci_table_shape.table, rows, start_row=1)
-
-        # 13. Section divider: Quality Management (only if any quality content exists)
-        has_quality_section = bool(
-            plan.quality_org_structure or plan.nc_review_narrative or plan.nc_tracker
-        )
-        if has_quality_section:
-            quality_divider = _clone_slide(prs, IDX_SECTION_QUALITY)
-            t3 = _shape_by_name(quality_divider, "Title 6")
-            if t3 is not None:
-                _set_first_run_text(t3, plan.quality_section_title or "QUALITY MANAGEMENT SYSTEM UPDATES")
-
-        # 14. Quality Organizational Structure (optional)
-        if plan.quality_org_structure:
-            quality_org_slide = _clone_slide(prs, IDX_QUALITY_ORG)
-            _strip_guidance_shapes(quality_org_slide)
-            quality_title = _shape_by_name(quality_org_slide, "Title 1")
-            if quality_title is not None:
-                title_runs = quality_title.text_frame.paragraphs[0].runs
-                if len(title_runs) > 1:
-                    title_runs[1].text = plan.presentation_title
-            quality_boxes = sorted(
-                (s for s in quality_org_slide.shapes if s.name.startswith("Rectangle: Rounded Corners")),
-                key=lambda s: (s.top, s.left),
-            )
-            for box, person in zip(quality_boxes, plan.quality_org_structure):
-                _set_org_box(box, person.name, f"{person.role}\nUPS Healthcare")
-            # Blank leftover template sample cards beyond the supplied people
-            for box in quality_boxes[len(plan.quality_org_structure):]:
-                _set_org_box(box, "", "")
-
-        # 15. Non-Conformance Review (optional)
-        if plan.nc_review_narrative or plan.nc_review_summary:
-            nc_review_slide = _clone_slide(prs, IDX_NC_REVIEW)
-            _strip_guidance_shapes(nc_review_slide)
-            _set_or_remove_facility_placeholder(nc_review_slide, plan.facility_name)
-            nc_narrative = _shape_by_name(nc_review_slide, "TextBox 7")
-            if nc_narrative is not None and plan.nc_review_narrative:
-                nc_narrative.text_frame.text = plan.nc_review_narrative
-            nc_summary_table = _shape_by_name(nc_review_slide, "Table 5")
-            if nc_summary_table is not None and nc_summary_table.has_table and plan.nc_review_summary:
-                tbl = nc_summary_table.table
-                for c_idx, val in enumerate(plan.nc_review_summary[: len(tbl.columns)]):
-                    tbl.cell(1, c_idx).text = val
-
-        # 16. Non-Conformance Tracker (optional)
-        if plan.nc_tracker:
-            nc_tracker_slide = _clone_slide(prs, IDX_NC_TRACKER)
-            _strip_guidance_shapes(nc_tracker_slide)
-            _strip_decorative_connectors(nc_tracker_slide)
-            nc_tracker_table = _shape_by_name(nc_tracker_slide, "Table 4")
-            if nc_tracker_table is not None and nc_tracker_table.has_table:
-                rows = [[r.period, r.nc_id, r.event, r.due_date, r.status] for r in plan.nc_tracker]
-                _fill_table_rows(nc_tracker_table.table, rows, start_row=1)
-
-        # 17. Next Steps (optional)
-        if plan.next_steps:
-            next_steps_slide = _clone_slide(prs, IDX_NEXT_STEPS)
-            _set_or_remove_facility_placeholder(next_steps_slide, plan.facility_name)
-
-            # Dynamic heading: use plan.next_steps_title
-            ns_title = _shape_by_name(next_steps_slide, "Title 1")
-            if ns_title is not None and ns_title.text_frame.paragraphs:
-                heading_text = (
-                    plan.next_steps_title.strip().upper()
-                    if plan.next_steps_title
-                    else "NEXT STEPS & TARGET TIMELINES"
-                )
-                p0 = ns_title.text_frame.paragraphs[0]
-                p0.text = heading_text
-                if p0.runs:
-                    p0.runs[0].font.size = Pt(22)
-                    p0.runs[0].font.bold = True
-
-            ns_table_shape = _shape_by_name(next_steps_slide, "Table 8")
-            if ns_table_shape is not None and ns_table_shape.has_table:
-                tbl = ns_table_shape.table
-                tbl._tbl.tblPr.set("firstRow", "0")
-                rows = [
-                    [s.step, (s.date or "").strip() or "Target Q4 2026"]
-                    for s in plan.next_steps
-                ]
-                _fill_table_rows(tbl, rows, start_row=0, text_color=RGBColor(0, 43, 73))
+        # 4-17. Narrative-ordered content archetypes — sequence decided by the
+        # LLM's Stage 1 narrative_order (falls back to the template's original
+        # fixed order if missing/invalid). See _resolve_archetype_order().
+        for archetype_key in _resolve_archetype_order(plan):
+            ARCHETYPE_DISPATCH[archetype_key](prs, plan)
 
         # 18. Mandatory Closing (always, intact)
         _clone_slide(prs, IDX_CLOSING)

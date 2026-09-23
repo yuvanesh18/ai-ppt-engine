@@ -78,6 +78,41 @@ def _check_hld_qbr_traceability(plan: Any, content_model: Any, report: Governanc
             )
 
 
+# Distinctive content types with a near-unambiguous archetype mapping. Used only to
+# surface likely under-utilized source content -- deliberately excludes overlapping
+# types (e.g. "metric", "fact") that legitimately map to many archetypes at once and
+# would otherwise produce noisy false positives.
+_COVERAGE_CHECKS = [
+    ("quote", ["voice_of_customer"], "a direct quote"),
+    ("risk", ["nc_tracker"], "an issue/incident/deviation"),
+    ("person", ["org_structure", "quality_org_structure"], "a named person/role"),
+    ("entity", ["org_structure", "quality_org_structure"], "a named person/role"),
+]
+
+
+def _check_hld_qbr_archetype_coverage(plan: Any, content_model: Any, report: GovernanceReport) -> None:
+    """Soft warning when the source clearly contains content of a distinctive type
+    (quote/risk/person) but every archetype that could hold it was left empty --
+    surfaces likely-dropped content instead of silently under-populating the deck."""
+    if content_model is None or not getattr(content_model, "content_items", None):
+        return
+    traceability = getattr(plan, "content_traceability", None) or {}
+    used_ids = {rid for ref_ids in traceability.values() for rid in ref_ids}
+    for content_type, candidate_fields, label in _COVERAGE_CHECKS:
+        if any(getattr(plan, f, None) for f in candidate_fields):
+            continue  # at least one candidate archetype was populated -- assume covered
+        unused = [
+            item.id for item in content_model.content_items
+            if item.type == content_type and item.id not in used_ids
+        ]
+        if unused:
+            report.warning(
+                f"Source document contains {label} (content ids {unused}) but "
+                f"{' / '.join(candidate_fields)} was left empty -- verify this wasn't "
+                "dropped in planning."
+            )
+
+
 def validate_plan_governance(
     plan: Any,
     template_id: str,
@@ -94,6 +129,7 @@ def validate_plan_governance(
         report.checks["template"] = "UPS Healthcare HLD QBR template selected"
         _enforce_hld_qbr_archetype_limits(plan, report)
         _check_hld_qbr_traceability(plan, content_model, report)
+        _check_hld_qbr_archetype_coverage(plan, content_model, report)
 
     all_text = "\n".join(_walk_text(plan.model_dump()))
     if re.search(r"\b(?:TBD|TODO|lorem ipsum|click to add|sample text)\b", all_text, re.I):

@@ -31,6 +31,12 @@ logger = get_logger(__name__)
 # Base delay (seconds) for exponential backoff on 429/consumption-limit responses.
 RATE_LIMIT_BACKOFF_BASE_SECONDS = 5.0
 
+
+def _mask_key(api_key: str) -> str:
+    """Return a log-safe identifier for an API key (last 4 chars only)."""
+    key = (api_key or "").strip()
+    return f"...{key[-4:]}" if len(key) > 4 else "..."
+
 # ---------------------------------------------------------------------------
 # Custom exceptions
 # ---------------------------------------------------------------------------
@@ -73,6 +79,7 @@ class WatsonxClient:
         temperature: float = 0.3,
         max_tokens: int = 4096,
         max_retries: int = 3,
+        fallback_model: Optional[str] = None,
     ) -> None:
         if not api_key or api_key.strip() == "":
             raise WatsonxAuthError(
@@ -97,10 +104,10 @@ class WatsonxClient:
 
         try:
             credentials = Credentials(url=url.strip(), api_key=api_key.strip())
-            api_client = APIClient(credentials, project_id=project_id.strip())
+            self._api_client = APIClient(credentials, project_id=project_id.strip())
             self._model_inference = ModelInference(
                 model_id=model,
-                api_client=api_client,
+                api_client=self._api_client,
                 # Disable the SDK's own internal retry-on-429 (defaults to up to 10
                 # retries with exponential backoff) — our chat_complete() loop below
                 # already handles rate-limit retries, and letting both retry would
@@ -116,6 +123,22 @@ class WatsonxClient:
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.max_retries = max_retries
+        self.fallback_model = (fallback_model or "").strip() or None
+        self._fallback_model_inference = None  # built lazily, only if the primary model is saturated
+        self._key_label = _mask_key(api_key)
+        logger.info("WatsonxClient initialized — key=%s project=%s model=%s fallback=%s", self._key_label, project_id.strip(), model, self.fallback_model)
+
+    def _get_fallback_inference(self):
+        """Lazily construct the fallback model's ModelInference (same api_client/project)."""
+        if self._fallback_model_inference is None:
+            from ibm_watsonx_ai.foundation_models import ModelInference
+
+            self._fallback_model_inference = ModelInference(
+                model_id=self.fallback_model,
+                api_client=self._api_client,
+                max_retries=0,
+            )
+        return self._fallback_model_inference
 
     def _classify_error(self, e: Exception) -> Exception:
         """Map an ibm-watsonx-ai SDK exception to an application-level exception."""
@@ -148,6 +171,44 @@ class WatsonxClient:
 
         return WatsonxAPIError(f"Unexpected error calling watsonx: {e}")
 
+    def _run_chat(self, model_inference, model_name: str, messages, params: Dict[str, Any]) -> str:
+        """Run the retry-with-backoff loop against a given ModelInference instance."""
+        last_error: Optional[Exception] = None
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                response = model_inference.chat(messages=messages, params=params)
+                choice = response["choices"][0]
+                message = choice["message"]
+                content = message.get("content") or ""
+                if not content:
+                    # Reasoning models (e.g. gpt-oss) can exhaust max_tokens on hidden
+                    # chain-of-thought before emitting final content.
+                    logger.warning(
+                        "watsonx returned empty content (finish_reason=%s). "
+                        "If this recurs, increase max_tokens for model %s.",
+                        choice.get("finish_reason"),
+                        model_name,
+                    )
+                logger.debug("watsonx response length: %d chars", len(content))
+                return content
+
+            except Exception as e:
+                classified = self._classify_error(e)
+                last_error = classified
+
+                if isinstance(classified, WatsonxRateLimitError) and attempt < self.max_retries:
+                    delay = RATE_LIMIT_BACKOFF_BASE_SECONDS * attempt
+                    logger.warning(
+                        "watsonx rate limited — key=%s model=%s (attempt %d/%d) — retrying in %.1fs",
+                        self._key_label, model_name, attempt, self.max_retries, delay,
+                    )
+                    time.sleep(delay)
+                    continue
+
+                raise classified from e
+
+        raise last_error  # pragma: no cover — loop always returns or raises
+
     def chat_complete(
         self,
         messages: List[Dict[str, str]],
@@ -160,13 +221,16 @@ class WatsonxClient:
 
         Automatically retries with exponential backoff when the account's free-tier
         concurrent-request limit (HTTP 429 / consumption_limit_reached) is hit, since
-        that condition typically clears within a few seconds.
+        that condition typically clears within a few seconds. If retries on the
+        primary model are exhausted with a rate-limit error and a fallback_model is
+        configured, transparently switches to it for this call.
         """
         _temp = temperature if temperature is not None else self.temperature
         _max_tok = max_tokens if max_tokens is not None else self.max_tokens
 
-        logger.debug(
-            "watsonx request — model=%s temp=%.2f max_tokens=%d messages=%d",
+        logger.info(
+            "watsonx request — key=%s model=%s temp=%.2f max_tokens=%d messages=%d",
+            self._key_label,
             self.model,
             _temp,
             _max_tok,
@@ -178,41 +242,17 @@ class WatsonxClient:
             "max_tokens": _max_tok,
         }
 
-        last_error: Optional[Exception] = None
-        for attempt in range(1, self.max_retries + 1):
-            try:
-                response = self._model_inference.chat(messages=messages, params=params)
-                choice = response["choices"][0]
-                message = choice["message"]
-                content = message.get("content") or ""
-                if not content:
-                    # Reasoning models (e.g. gpt-oss) can exhaust max_tokens on hidden
-                    # chain-of-thought before emitting final content.
-                    logger.warning(
-                        "watsonx returned empty content (finish_reason=%s). "
-                        "If this recurs, increase max_tokens for model %s.",
-                        choice.get("finish_reason"),
-                        self.model,
-                    )
-                logger.debug("watsonx response length: %d chars", len(content))
-                return content
-
-            except Exception as e:
-                classified = self._classify_error(e)
-                last_error = classified
-
-                if isinstance(classified, WatsonxRateLimitError) and attempt < self.max_retries:
-                    delay = RATE_LIMIT_BACKOFF_BASE_SECONDS * attempt
-                    logger.warning(
-                        "watsonx rate limited (attempt %d/%d) — retrying in %.1fs",
-                        attempt, self.max_retries, delay,
-                    )
-                    time.sleep(delay)
-                    continue
-
-                raise classified from e
-
-        raise last_error  # pragma: no cover — loop always returns or raises
+        try:
+            return self._run_chat(self._model_inference, self.model, messages, params)
+        except WatsonxRateLimitError:
+            if not self.fallback_model or self.fallback_model == self.model:
+                raise
+            logger.warning(
+                "watsonx model %s saturated — key=%s falling back to %s",
+                self.model, self._key_label, self.fallback_model,
+            )
+            fallback_inference = self._get_fallback_inference()
+            return self._run_chat(fallback_inference, self.fallback_model, messages, params)
 
     def chat_complete_json(
         self,

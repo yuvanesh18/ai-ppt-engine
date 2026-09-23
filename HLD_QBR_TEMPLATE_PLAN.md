@@ -192,6 +192,34 @@ exact step is step 1 of `convert_hld_qbr_template.py` (§5).
 3. **Slide 8** (hyperlinked "additional slides available" pointer, referencing an external
    Seismic library not present in this file) — plan treats this as pure guidance with nothing
    to clone (there is no actual slide content behind the hyperlink in this asset). Confirm no
+
+---
+
+## 8. KNOWN BUG (2026-09-23) — slide-count guidance only counts 6 of 16 archetypes
+
+**Symptom:** generated decks always produce the same fixed content slides
+(priorities/achievements/action_tracker/next_steps/+charts/kpi_tables) regardless of the
+user's requested slide count or what the source document actually contains — the LLM never
+picks `org_structure`, `voice_of_customer`, `gemba_walk`, `ci_tracker`,
+`quality_org_structure`, `kpi_safety_quality`, `kpi_operational`, `nc_review_summary`, or
+`nc_tracker`.
+
+**Root cause:** `llm/prompts_hld_qbr.py::_build_slide_count_guidance()` hardcodes an exact
+"Total content slides ... = N" arithmetic instruction using only 6 of the 16 optional
+`HLDQBRPresentationPlan` fields as valid terms. The other 10 archetypes are only mentioned
+once, earlier in the prompt, as an uncounted aside ("Optional if evidence exists: ...") — so
+they never factor into how the LLM decides which slides to populate to hit the target count.
+This is a prompt bug only; the schema, layout registry, and builder already fully support all
+16 archetypes.
+
+Full root-cause analysis + phased fix plan: see
+[HLD_QBR_SLIDE_COUNT_ALLOCATION_BUG.md](HLD_QBR_SLIDE_COUNT_ALLOCATION_BUG.md).
+
+**Status:** ✅ Fixed 2026-09-23 — `_build_slide_count_guidance()` in `llm/prompts_hld_qbr.py`
+now generates the archetype list dynamically from `llm.hld_qbr_layout_registry.HLD_QBR_ARCHETYPES`
+(plus the 4 fields not in the registry: `charts`, `kpi_tables`, `operational_chart`,
+`nc_review_summary`) and uses evidence-first soft-target guidance instead of a strict
+6-field equality constraint.
    further asset is expected.
 4. Should `GUIDE_ONLY` appendix slides (icons, brand cheatsheet) be preserved *anywhere*
    (e.g. as a hidden reference tab in the app for the user) or fully deleted as this plan

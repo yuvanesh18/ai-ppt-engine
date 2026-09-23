@@ -26,7 +26,7 @@ import json
 from pathlib import Path
 from typing import List, Optional
 
-from llm.schemas import ChunkAnalysis, ContentAnalysis
+from llm.schemas import ChunkAnalysis, ContentAnalysis, normalize_content_analysis_lists
 from llm.prompts import CONSOLIDATION_PROMPT, SYSTEM_ROLE_CONSOLIDATOR
 from llm.key_manager import KeyManager
 from core.document_structure import DocumentSection, render_structure_text
@@ -180,11 +180,21 @@ def consolidate(
         raise ConsolidationError(f"Consolidation LLM call failed: {e}") from e
 
     # Parse into ContentAnalysis
+    raw_data = normalize_content_analysis_lists(raw_data)
     try:
         content_analysis = ContentAnalysis(**raw_data)
     except Exception as e:
         logger.warning("ContentAnalysis validation failed in consolidation: %s — building from raw", e)
-        content_analysis = _build_fallback_analysis(raw_data, analyses, document_title, suggested)
+        try:
+            content_analysis = _build_fallback_analysis(raw_data, analyses, document_title, suggested)
+        except Exception as e2:
+            logger.error("Fallback analysis build also failed: %s — using minimal stub", e2)
+            content_analysis = ContentAnalysis(
+                main_topic=str(raw_data.get("main_topic", document_title)),
+                suggested_slide_count=suggested,
+                content_types_detected=["TITLE_AND_CONTENT"],
+                summary=str(raw_data.get("summary", f"Analysis of {document_title}")),
+            )
 
     # Save consolidation log
     consolidation_log = {

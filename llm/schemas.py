@@ -257,6 +257,26 @@ class ContentAnalysis(BaseModel):
     agenda_topics: List[str] = Field(default_factory=list)         # ordered section topics for agenda slide
 
 
+# Fields the schema requires as List[str] — LLMs sometimes collapse a
+# single-item list down to a bare string (e.g. "conclusions": "...").
+CONTENT_ANALYSIS_LIST_FIELDS = (
+    "key_concepts", "sections", "statistics", "processes", "comparisons",
+    "timelines", "conclusions", "recommendations", "content_types_detected",
+    "executive_highlights", "agenda_topics",
+)
+
+
+def normalize_content_analysis_lists(raw_data: dict) -> dict:
+    """Coerce non-list values in ContentAnalysis's list-typed fields so validation doesn't crash."""
+    for field in CONTENT_ANALYSIS_LIST_FIELDS:
+        value = raw_data.get(field)
+        if isinstance(value, str):
+            raw_data[field] = [value] if value.strip() else []
+        elif value is not None and not isinstance(value, list):
+            raw_data[field] = [str(value)]
+    return raw_data
+
+
 # ---------------------------------------------------------------------------
 # Validation result
 # ---------------------------------------------------------------------------
