@@ -24,7 +24,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from llm.json_utils import JSONParseError, retry_json_completion
-from utils.logging_utils import get_logger
+from utils.logging_utils import get_logger, log_llm_usage
 
 logger = get_logger(__name__)
 
@@ -80,6 +80,7 @@ class WatsonxClient:
         max_tokens: int = 4096,
         max_retries: int = 3,
         fallback_model: Optional[str] = None,
+        key_number: Optional[int] = None,
     ) -> None:
         if not api_key or api_key.strip() == "":
             raise WatsonxAuthError(
@@ -126,6 +127,7 @@ class WatsonxClient:
         self.fallback_model = (fallback_model or "").strip() or None
         self._fallback_model_inference = None  # built lazily, only if the primary model is saturated
         self._key_label = _mask_key(api_key)
+        self._key_number = key_number
         logger.info("WatsonxClient initialized — key=%s project=%s model=%s fallback=%s", self._key_label, project_id.strip(), model, self.fallback_model)
 
     def _get_fallback_inference(self):
@@ -180,6 +182,16 @@ class WatsonxClient:
                 choice = response["choices"][0]
                 message = choice["message"]
                 content = message.get("content") or ""
+                usage = response.get("usage") or {}
+                log_llm_usage(
+                    provider="watsonx",
+                    key_number=self._key_number,
+                    key_label=self._key_label,
+                    model=model_name,
+                    prompt_tokens=usage.get("prompt_tokens"),
+                    completion_tokens=usage.get("completion_tokens"),
+                    total_tokens=usage.get("total_tokens"),
+                )
                 if not content:
                     # Reasoning models (e.g. gpt-oss) can exhaust max_tokens on hidden
                     # chain-of-thought before emitting final content.

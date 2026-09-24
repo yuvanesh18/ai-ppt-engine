@@ -21,8 +21,8 @@ logger = get_logger(__name__)
 _REGISTRY: Dict[str, Dict[str, Any]] = {
     "dark_navy": {
         "id":          "dark_navy",
-        "name":        "Dark Navy (Default)",
-        "description": "Sleek dark navy & purple professional theme",
+        "name":        "Template 1",
+        "description": "Dark Navy",
         "icon":        "🌑",
     },
     # "techm": {
@@ -33,26 +33,26 @@ _REGISTRY: Dict[str, Dict[str, Any]] = {
     # },
     "white_blue": {
         "id":          "white_blue",
-        "name":        "White & Blue Professional",
-        "description": "Clean white + blue corporate design",
+        "name":        "Template 2",
+        "description": "White & Blue",
         "icon":        "☁️",
     },
     "techm_v3": {
         "id":          "techm_v3",
-        "name":        "TechM Dynamic V3 (Freeform Layouts)",
-        "description": "Tech Mahindra 3-slide master: dynamic LLM layouts & content enrichment",
+        "name":        "Template 3",
+        "description": "TechM",
         "icon":        "✨",
     },
     "template1": {
         "id":          "template1",
-        "name":        "Template-1: AI Transformation Weekly",
-        "description": "Warm earth-tone palette (espresso/amber/sand) — 5-slide master with ACTION_TABLE & dynamic LLM layouts",
+        "name":        "Template 4",
+        "description": "Professional",
         "icon":        "🟤",
     },
     "hld_qbr": {
         "id":          "hld_qbr",
-        "name":        "HLD QBR (UPS Healthcare)",
-        "description": "UPS Healthcare Quarterly Business Review template — archetype-based (org structure, KPI dashboard, non-conformance, gemba walk...) with brand guardrails enforced",
+        "name":        "HLD QBR",
+        "description": "UPS Healthcare",
         "icon":        "🏥",
     },
 }

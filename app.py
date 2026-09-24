@@ -1113,6 +1113,7 @@ def run_generation_pipeline(
                     max_retries=config.LLM_MAX_RETRIES,
                     provider="watsonx",
                     project_id=config.WATSONX_PROJECT_ID,
+                    project_ids=config.WATSONX_PROJECT_IDS,
                     url=config.WATSONX_URL,
                     fallback_model=config.WATSONX_FALLBACK_MODEL_ID,
                 )
@@ -1613,6 +1614,7 @@ def _build_qa_client(api_config: dict):
             max_retries=config.LLM_MAX_RETRIES,
             provider="watsonx",
             project_id=config.WATSONX_PROJECT_ID,
+            project_ids=config.WATSONX_PROJECT_IDS,
             url=config.WATSONX_URL,
             fallback_model=config.WATSONX_FALLBACK_MODEL_ID,
         )

@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from llm.json_utils import JSONParseError, parse_json_response, retry_json_completion
-from utils.logging_utils import get_logger
+from utils.logging_utils import get_logger, log_llm_usage
 
 logger = get_logger(__name__)
 
@@ -62,6 +62,7 @@ class GroqClient:
         temperature: float = 0.3,
         max_tokens: int = 4096,
         max_retries: int = 3,
+        key_number: Optional[int] = None,
     ) -> None:
         if not api_key or api_key.strip() == "":
             raise GroqAuthError(
@@ -85,6 +86,8 @@ class GroqClient:
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.max_retries = max_retries
+        self.key_number = key_number
+        self._key_label = f"...{api_key.strip()[-4:]}" if len(api_key.strip()) > 4 else "..."
 
     def chat_complete(
         self,
@@ -120,6 +123,16 @@ class GroqClient:
                 **extra_kwargs,
             )
             content = response.choices[0].message.content or ""
+            usage = getattr(response, "usage", None)
+            log_llm_usage(
+                provider="groq",
+                key_number=self.key_number,
+                key_label=self._key_label,
+                model=self.model,
+                prompt_tokens=getattr(usage, "prompt_tokens", None),
+                completion_tokens=getattr(usage, "completion_tokens", None),
+                total_tokens=getattr(usage, "total_tokens", None),
+            )
             logger.debug("Groq response length: %d chars", len(content))
             return content
 

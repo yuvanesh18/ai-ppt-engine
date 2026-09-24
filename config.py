@@ -81,6 +81,14 @@ WATSONX_API_KEYS: list[str] = [
     k.strip() for k in _raw_watsonx_keys.split(",") if k.strip()
 ] if _raw_watsonx_keys else ([WATSONX_API_KEY] if WATSONX_API_KEY else [])
 
+# Per-key project IDs (comma-separated, same order as WATSONX_API_KEYS) — lets each
+# collaborator's key bill against their own project instead of a single shared one.
+# Falls back to WATSONX_PROJECT_ID for every key when not set.
+_raw_watsonx_project_ids = os.getenv("WATSONX_PROJECT_IDS", "")
+WATSONX_PROJECT_IDS: list[str] = [
+    p.strip() for p in _raw_watsonx_project_ids.split(",") if p.strip()
+] if _raw_watsonx_project_ids else ([WATSONX_PROJECT_ID] if WATSONX_PROJECT_ID else [])
+
 # ---------------------------------------------------------------------------
 # Semantic chunking settings
 # ---------------------------------------------------------------------------
